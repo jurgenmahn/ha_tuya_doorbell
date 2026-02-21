@@ -6,6 +6,7 @@ import asyncio
 import base64
 import json
 import logging
+from pathlib import Path
 import time
 from typing import Any, Callable
 
@@ -18,10 +19,19 @@ from .const import (
     CONF_DEVICE_NAME,
     CONF_HOST,
     CONF_LOCAL_KEY,
+    CONF_ONVIF_PASSWORD,
+    CONF_ONVIF_USERNAME,
     CONF_PORT,
     CONF_PROTOCOL_VERSION,
+    CONF_RTSP_PATH,
+    CONF_RTSP_PORT,
+    CONF_SNAPSHOT_PATH,
     DEFAULT_EVENT_RESET_TIMEOUT,
+    DEFAULT_ONVIF_USERNAME,
     DEFAULT_PORT,
+    DEFAULT_RTSP_PATH,
+    DEFAULT_RTSP_PORT,
+    DEFAULT_SNAPSHOT_PATH,
     DOMAIN,
     DP_DOORBELL_BUTTON,
     DP_MOTION_DETECTION,
@@ -33,6 +43,7 @@ from .const import (
     EVENT_MOTION_DETECT,
     HEARTBEAT_INTERVAL,
     HEARTBEAT_MAX_FAILURES,
+    MAX_SNAPSHOTS,
     RECONNECT_BACKOFF,
     RECONNECT_INITIAL_WAIT,
     RECONNECT_RETRY_COUNT,
@@ -88,6 +99,10 @@ class DeviceHub:
         # Event counters
         self._event_counters: dict[int, int] = {}
 
+        # Snapshot state
+        self._last_snapshot_path: str | None = None
+        self._last_snapshot_url: str | None = None
+
         # Tasks
         self._heartbeat_task: asyncio.Task | None = None
         self._reconnect_task: asyncio.Task | None = None
@@ -127,6 +142,27 @@ class DeviceHub:
             model="Video Doorbell",
             sw_version=self._version,
         )
+
+    @property
+    def rtsp_url(self) -> str | None:
+        """Construct full RTSP URL from config entry data/options."""
+        opts = self._config_entry.options
+        data = self._config_entry.data
+        password = opts.get(CONF_ONVIF_PASSWORD, data.get(CONF_ONVIF_PASSWORD, ""))
+        if not password:
+            return None
+        username = opts.get(CONF_ONVIF_USERNAME, DEFAULT_ONVIF_USERNAME)
+        port = opts.get(CONF_RTSP_PORT, DEFAULT_RTSP_PORT)
+        path = opts.get(CONF_RTSP_PATH, DEFAULT_RTSP_PATH)
+        return f"rtsp://{username}:{password}@{self._host}:{port}{path}"
+
+    @property
+    def last_snapshot_path(self) -> str | None:
+        return self._last_snapshot_path
+
+    @property
+    def last_snapshot_url(self) -> str | None:
+        return self._last_snapshot_url
 
     def get_dp_state(self, dp_id: int) -> Any:
         """Get the current state of a datapoint."""
@@ -272,6 +308,52 @@ class DeviceHub:
 
         return discovered
 
+    async def add_manual_dp(
+        self, dp_id: int, name: str, dp_type: str, entity_type: str
+    ) -> None:
+        """Add a manually-defined datapoint to the device profile."""
+        if self._profile is None:
+            self._profile = DeviceProfile(
+                device_id=self._device_id,
+                protocol_version=self._version,
+            )
+
+        definition = DPDefinition(
+            dp_id=dp_id,
+            name=name,
+            dp_type=dp_type,
+            entity_type=entity_type,
+        )
+        self._profile.discovered_dps[dp_id] = definition
+        await self._dp_registry.save_profile(self._hass, self._profile)
+        _LOGGER.info("Added manual DP %d (%s) as %s/%s", dp_id, name, dp_type, entity_type)
+
+    async def remove_dp(self, dp_id: int) -> None:
+        """Remove a datapoint from the device profile."""
+        if self._profile and dp_id in self._profile.discovered_dps:
+            del self._profile.discovered_dps[dp_id]
+            await self._dp_registry.save_profile(self._hass, self._profile)
+            _LOGGER.info("Removed DP %d from profile", dp_id)
+
+    async def update_dp(
+        self,
+        dp_id: int,
+        name: str | None = None,
+        entity_type: str | None = None,
+    ) -> None:
+        """Update an existing datapoint definition."""
+        if not self._profile or dp_id not in self._profile.discovered_dps:
+            _LOGGER.warning("Cannot update DP %d: not in profile", dp_id)
+            return
+
+        definition = self._profile.discovered_dps[dp_id]
+        if name is not None:
+            definition.name = name
+        if entity_type is not None:
+            definition.entity_type = entity_type
+        await self._dp_registry.save_profile(self._hass, self._profile)
+        _LOGGER.info("Updated DP %d: name=%s entity_type=%s", dp_id, definition.name, definition.entity_type)
+
     # --- Internal methods ---
 
     def _handle_status_update(self, dps: dict) -> None:
@@ -306,14 +388,118 @@ class DeviceHub:
         slug = self._device_name_slug()
         _LOGGER.debug("Event: type=%s dp=%d counter=%d image_url=%s", event_type, dp_id, counter, image_url)
 
-        self._fire_event(f"{event_type}_{slug}", {
+        event_data = {
             "device_id": self._device_id,
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
             "image_url": image_url,
             "event_counter": counter,
             "dp_id": dp_id,
             "raw_value": str(value) if not isinstance(value, (str, int, float, bool)) else value,
-        })
+        }
+
+        # Capture RTSP snapshot on doorbell press
+        if dp_id == DP_DOORBELL_BUTTON and self.rtsp_url:
+            asyncio.ensure_future(self._capture_snapshot_for_event(event_data, slug, event_type))
+        else:
+            self._fire_event(f"{event_type}_{slug}", event_data)
+
+    async def _capture_snapshot_for_event(
+        self, event_data: dict, slug: str, event_type: str
+    ) -> None:
+        """Capture snapshot and then fire the event with snapshot URL included."""
+        snapshot_url = await self._capture_snapshot()
+        if snapshot_url:
+            event_data["snapshot_url"] = snapshot_url
+        self._fire_event(f"{event_type}_{slug}", event_data)
+
+    async def _capture_snapshot(self) -> str | None:
+        """Capture a frame from RTSP stream and save to disk."""
+        rtsp_url = self.rtsp_url
+        if not rtsp_url:
+            return None
+
+        opts = self._config_entry.options
+        snapshot_dir = opts.get(CONF_SNAPSHOT_PATH, DEFAULT_SNAPSHOT_PATH)
+        slug = self._device_name_slug()
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        filename = f"{slug}_{timestamp}.jpg"
+
+        # Ensure directory exists
+        path = Path(snapshot_dir)
+        try:
+            path.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            _LOGGER.error("Cannot create snapshot directory: %s", snapshot_dir)
+            return None
+
+        filepath = path / filename
+
+        try:
+            process = await asyncio.create_subprocess_exec(
+                "ffmpeg",
+                "-rtsp_transport", "tcp",
+                "-i", rtsp_url,
+                "-vframes", "1",
+                "-f", "image2",
+                str(filepath),
+                "-y",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            _, stderr = await asyncio.wait_for(process.communicate(), timeout=15.0)
+
+            if process.returncode != 0:
+                _LOGGER.debug(
+                    "Snapshot ffmpeg failed (rc=%s): %s",
+                    process.returncode,
+                    stderr.decode(errors="replace")[:200] if stderr else "",
+                )
+                return None
+
+            if not filepath.exists():
+                return None
+
+            self._last_snapshot_path = str(filepath)
+
+            # Build HA-accessible URL: /local/doorbell/filename
+            # snapshot_dir is expected to be under /config/www/
+            rel = str(filepath)
+            www_prefix = "/config/www/"
+            if rel.startswith(www_prefix):
+                self._last_snapshot_url = f"/local/{rel[len(www_prefix):]}"
+            else:
+                self._last_snapshot_url = f"/local/doorbell/{filename}"
+
+            _LOGGER.info("Snapshot saved: %s (url: %s)", filepath, self._last_snapshot_url)
+
+            # Cleanup old snapshots
+            self._cleanup_snapshots(path, slug)
+
+            return self._last_snapshot_url
+
+        except asyncio.TimeoutError:
+            _LOGGER.warning("Snapshot capture timed out")
+        except FileNotFoundError:
+            _LOGGER.error("ffmpeg not found — install ffmpeg for doorbell snapshots")
+        except Exception:
+            _LOGGER.debug("Snapshot capture error", exc_info=True)
+
+        return None
+
+    @staticmethod
+    def _cleanup_snapshots(directory: Path, slug: str) -> None:
+        """Keep only the most recent MAX_SNAPSHOTS snapshots for this device."""
+        try:
+            files = sorted(
+                directory.glob(f"{slug}_*.jpg"),
+                key=lambda f: f.stat().st_mtime,
+            )
+            if len(files) > MAX_SNAPSHOTS:
+                for old_file in files[: len(files) - MAX_SNAPSHOTS]:
+                    old_file.unlink(missing_ok=True)
+                    _LOGGER.debug("Deleted old snapshot: %s", old_file)
+        except OSError:
+            _LOGGER.debug("Snapshot cleanup error", exc_info=True)
 
     def _handle_disconnect(self) -> None:
         """Handle connection loss."""

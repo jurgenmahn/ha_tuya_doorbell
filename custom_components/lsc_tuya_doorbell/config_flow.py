@@ -17,11 +17,30 @@ from .const import (
     CONF_DEVICE_NAME,
     CONF_HOST,
     CONF_LOCAL_KEY,
+    CONF_ONVIF_PASSWORD,
+    CONF_ONVIF_USERNAME,
     CONF_PORT,
     CONF_PROTOCOL_VERSION,
+    CONF_RTSP_PATH,
+    CONF_RTSP_PORT,
+    CONF_SNAPSHOT_PATH,
+    DEFAULT_ONVIF_USERNAME,
     DEFAULT_PORT,
+    DEFAULT_RTSP_PATH,
+    DEFAULT_RTSP_PORT,
+    DEFAULT_SNAPSHOT_PATH,
     DEVICE_TYPE_LABELS,
     DOMAIN,
+    DP_TYPE_BOOL,
+    DP_TYPE_ENUM,
+    DP_TYPE_INT,
+    DP_TYPE_RAW,
+    DP_TYPE_STRING,
+    ENTITY_BINARY_SENSOR,
+    ENTITY_NUMBER,
+    ENTITY_SELECT,
+    ENTITY_SENSOR,
+    ENTITY_SWITCH,
 )
 from .discovery.udp_listener import DiscoveredDevice, UDPDiscoveryListener
 from .protocol.connection import TuyaConnection
@@ -43,6 +62,7 @@ class LscTuyaDoorbellConfigFlow(ConfigFlow, domain=DOMAIN):
         self._port: int = DEFAULT_PORT
         self._version: str = "3.3"
         self._device_name: str = ""
+        self._onvif_password: str = ""
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -149,6 +169,7 @@ class LscTuyaDoorbellConfigFlow(ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             self._local_key = user_input[CONF_LOCAL_KEY]
             self._device_name = user_input.get(CONF_DEVICE_NAME, self._device_id)
+            self._onvif_password = user_input.get(CONF_ONVIF_PASSWORD, "")
 
             # Validate local key
             if len(self._local_key) != 16:
@@ -161,6 +182,7 @@ class LscTuyaDoorbellConfigFlow(ConfigFlow, domain=DOMAIN):
             data_schema=vol.Schema({
                 vol.Required(CONF_LOCAL_KEY): str,
                 vol.Optional(CONF_DEVICE_NAME, default=self._device_id): str,
+                vol.Optional(CONF_ONVIF_PASSWORD, default=""): str,
             }),
             errors=errors,
             description_placeholders={
@@ -199,16 +221,19 @@ class LscTuyaDoorbellConfigFlow(ConfigFlow, domain=DOMAIN):
                 await self.async_set_unique_id(self._device_id)
                 self._abort_if_unique_id_configured()
 
+                data = {
+                    CONF_DEVICE_ID: self._device_id,
+                    CONF_LOCAL_KEY: self._local_key,
+                    CONF_HOST: self._host,
+                    CONF_PORT: self._port,
+                    CONF_PROTOCOL_VERSION: self._version,
+                    CONF_DEVICE_NAME: self._device_name,
+                }
+                if self._onvif_password:
+                    data[CONF_ONVIF_PASSWORD] = self._onvif_password
                 return self.async_create_entry(
                     title=self._device_name,
-                    data={
-                        CONF_DEVICE_ID: self._device_id,
-                        CONF_LOCAL_KEY: self._local_key,
-                        CONF_HOST: self._host,
-                        CONF_PORT: self._port,
-                        CONF_PROTOCOL_VERSION: self._version,
-                        CONF_DEVICE_NAME: self._device_name,
-                    },
+                    data=data,
                 )
         except ConnectionError:
             errors["base"] = "cannot_connect"
@@ -224,6 +249,7 @@ class LscTuyaDoorbellConfigFlow(ConfigFlow, domain=DOMAIN):
                 data_schema=vol.Schema({
                     vol.Required(CONF_LOCAL_KEY, default=self._local_key): str,
                     vol.Optional(CONF_DEVICE_NAME, default=self._device_name): str,
+                    vol.Optional(CONF_ONVIF_PASSWORD, default=self._onvif_password): str,
                 }),
                 errors=errors,
                 description_placeholders={
@@ -240,18 +266,73 @@ class LscTuyaDoorbellConfigFlow(ConfigFlow, domain=DOMAIN):
         return LscTuyaDoorbellOptionsFlow(config_entry)
 
 
+ENTITY_TYPE_OPTIONS = {
+    ENTITY_SWITCH: "Switch",
+    ENTITY_SENSOR: "Sensor",
+    ENTITY_SELECT: "Select",
+    ENTITY_NUMBER: "Number",
+    ENTITY_BINARY_SENSOR: "Binary Sensor",
+}
+
+DP_TYPE_OPTIONS = {
+    DP_TYPE_BOOL: "Boolean",
+    DP_TYPE_INT: "Integer",
+    DP_TYPE_ENUM: "Enum",
+    DP_TYPE_STRING: "String",
+    DP_TYPE_RAW: "Raw",
+}
+
+MENU_CONNECTION = "connection"
+MENU_CAMERA = "camera"
+MENU_DATAPOINTS = "datapoints"
+MENU_SCAN = "scan"
+
+MENU_OPTIONS = {
+    MENU_CONNECTION: "Connection Settings",
+    MENU_CAMERA: "Camera Settings",
+    MENU_DATAPOINTS: "Manage Datapoints",
+    MENU_SCAN: "Scan for Datapoints",
+}
+
+
 class LscTuyaDoorbellOptionsFlow(OptionsFlow):
     """Handle options for LSC Tuya Doorbell."""
 
     def __init__(self, config_entry: ConfigEntry) -> None:
         self._config_entry = config_entry
+        self._editing_dp_id: int | None = None
+
+    def _get_hub(self):
+        """Get the DeviceHub for this config entry."""
+        return self.hass.data.get(DOMAIN, {}).get(self._config_entry.entry_id)
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Manage options."""
+        """Main menu: choose connection settings, manage DPs, or scan."""
         if user_input is not None:
-            # Update host if changed
+            menu = user_input.get("menu")
+            if menu == MENU_CONNECTION:
+                return await self.async_step_connection()
+            if menu == MENU_CAMERA:
+                return await self.async_step_camera_settings()
+            if menu == MENU_DATAPOINTS:
+                return await self.async_step_dp_list()
+            if menu == MENU_SCAN:
+                return await self.async_step_dp_scan()
+
+        return self.async_show_form(
+            step_id="init",
+            data_schema=vol.Schema({
+                vol.Required("menu", default=MENU_CONNECTION): vol.In(MENU_OPTIONS),
+            }),
+        )
+
+    async def async_step_connection(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Connection settings (host, port, protocol)."""
+        if user_input is not None:
             new_data = dict(self._config_entry.data)
             if CONF_HOST in user_input:
                 new_data[CONF_HOST] = user_input[CONF_HOST]
@@ -267,7 +348,7 @@ class LscTuyaDoorbellOptionsFlow(OptionsFlow):
 
         current = self._config_entry.data
         return self.async_show_form(
-            step_id="init",
+            step_id="connection",
             data_schema=vol.Schema({
                 vol.Optional(
                     CONF_HOST, default=current.get(CONF_HOST, "")
@@ -281,3 +362,319 @@ class LscTuyaDoorbellOptionsFlow(OptionsFlow):
                 ): vol.In({"3.3": "3.3", "3.4": "3.4", "3.5": "3.5"}),
             }),
         )
+
+    async def async_step_camera_settings(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Camera / RTSP settings."""
+        if user_input is not None:
+            # Store camera settings in options
+            new_options = dict(self._config_entry.options)
+            new_options[CONF_ONVIF_USERNAME] = user_input.get(
+                CONF_ONVIF_USERNAME, DEFAULT_ONVIF_USERNAME
+            )
+            new_options[CONF_ONVIF_PASSWORD] = user_input.get(
+                CONF_ONVIF_PASSWORD, ""
+            )
+            new_options[CONF_RTSP_PORT] = user_input.get(
+                CONF_RTSP_PORT, DEFAULT_RTSP_PORT
+            )
+            new_options[CONF_RTSP_PATH] = user_input.get(
+                CONF_RTSP_PATH, DEFAULT_RTSP_PATH
+            )
+            new_options[CONF_SNAPSHOT_PATH] = user_input.get(
+                CONF_SNAPSHOT_PATH, DEFAULT_SNAPSHOT_PATH
+            )
+            return self.async_create_entry(title="", data=new_options)
+
+        # Get current values from options or entry data
+        opts = self._config_entry.options
+        data = self._config_entry.data
+        return self.async_show_form(
+            step_id="camera_settings",
+            data_schema=vol.Schema({
+                vol.Optional(
+                    CONF_ONVIF_USERNAME,
+                    default=opts.get(CONF_ONVIF_USERNAME, DEFAULT_ONVIF_USERNAME),
+                ): str,
+                vol.Optional(
+                    CONF_ONVIF_PASSWORD,
+                    default=opts.get(
+                        CONF_ONVIF_PASSWORD,
+                        data.get(CONF_ONVIF_PASSWORD, ""),
+                    ),
+                ): str,
+                vol.Optional(
+                    CONF_RTSP_PORT,
+                    default=opts.get(CONF_RTSP_PORT, DEFAULT_RTSP_PORT),
+                ): vol.Coerce(int),
+                vol.Optional(
+                    CONF_RTSP_PATH,
+                    default=opts.get(CONF_RTSP_PATH, DEFAULT_RTSP_PATH),
+                ): str,
+                vol.Optional(
+                    CONF_SNAPSHOT_PATH,
+                    default=opts.get(CONF_SNAPSHOT_PATH, DEFAULT_SNAPSHOT_PATH),
+                ): str,
+            }),
+        )
+
+    async def async_step_dp_list(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Show configured DPs as a selectable list."""
+        hub = self._get_hub()
+
+        if user_input is not None:
+            selected = user_input.get("dp_select")
+            if selected == "__add__":
+                return await self.async_step_dp_add()
+            if selected is not None:
+                self._editing_dp_id = int(selected)
+                return await self.async_step_dp_edit()
+
+        # Build list of DPs from profile
+        dp_options: dict[str, str] = {}
+        if hub and hub.profile:
+            for dp_id in sorted(hub.profile.discovered_dps):
+                dp_def = hub.profile.discovered_dps[dp_id]
+                dp_options[str(dp_id)] = (
+                    f"DP {dp_id}: {dp_def.name} ({dp_def.entity_type})"
+                )
+
+        dp_options["__add__"] = "Add new datapoint..."
+        count = len(dp_options) - 1  # exclude the "add" option
+
+        return self.async_show_form(
+            step_id="dp_list",
+            data_schema=vol.Schema({
+                vol.Required("dp_select"): vol.In(dp_options),
+            }),
+            description_placeholders={"count": str(count)},
+        )
+
+    async def async_step_dp_edit(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Edit or delete a DP."""
+        hub = self._get_hub()
+        dp_id = self._editing_dp_id
+
+        if dp_id is None or not hub or not hub.profile:
+            return await self.async_step_dp_list()
+
+        dp_def = hub.profile.discovered_dps.get(dp_id)
+        if dp_def is None:
+            return await self.async_step_dp_list()
+
+        if user_input is not None:
+            if user_input.get("delete", False):
+                await hub.remove_dp(dp_id)
+            else:
+                await hub.update_dp(
+                    dp_id,
+                    name=user_input.get("name"),
+                    entity_type=user_input.get("entity_type"),
+                )
+            await self.hass.config_entries.async_reload(
+                self._config_entry.entry_id
+            )
+            return self.async_create_entry(title="", data={})
+
+        return self.async_show_form(
+            step_id="dp_edit",
+            data_schema=vol.Schema({
+                vol.Required("name", default=dp_def.name): str,
+                vol.Required(
+                    "entity_type", default=dp_def.entity_type
+                ): vol.In(ENTITY_TYPE_OPTIONS),
+                vol.Optional("delete", default=False): bool,
+            }),
+            description_placeholders={
+                "dp_id": str(dp_id),
+                "name": dp_def.name,
+            },
+        )
+
+    async def async_step_dp_add(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Add a new custom datapoint."""
+        errors: dict[str, str] = {}
+        hub = self._get_hub()
+
+        if user_input is not None and hub:
+            dp_id = user_input["dp_id"]
+            if hub.profile and dp_id in hub.profile.discovered_dps:
+                errors["dp_id"] = "dp_already_exists"
+            elif dp_id < 1 or dp_id > 255:
+                errors["dp_id"] = "dp_id_out_of_range"
+            else:
+                await hub.add_manual_dp(
+                    dp_id=dp_id,
+                    name=user_input["name"],
+                    dp_type=user_input["dp_type"],
+                    entity_type=user_input["entity_type"],
+                )
+                await self.hass.config_entries.async_reload(
+                    self._config_entry.entry_id
+                )
+                return self.async_create_entry(title="", data={})
+
+        return self.async_show_form(
+            step_id="dp_add",
+            data_schema=vol.Schema({
+                vol.Required("dp_id"): vol.Coerce(int),
+                vol.Required("name"): str,
+                vol.Required("dp_type", default=DP_TYPE_BOOL): vol.In(
+                    DP_TYPE_OPTIONS
+                ),
+                vol.Required("entity_type", default=ENTITY_SWITCH): vol.In(
+                    ENTITY_TYPE_OPTIONS
+                ),
+            }),
+            errors=errors,
+        )
+
+    async def async_step_dp_scan(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Start DP scan — show progress spinner while scanning in background."""
+        hub = self._get_hub()
+
+        if not hub or not hub.available:
+            return self.async_show_form(
+                step_id="dp_scan",
+                data_schema=vol.Schema({}),
+                errors={"base": "device_unavailable"},
+                description_placeholders={"count": "0"},
+            )
+
+        # Launch background scan task
+        if not hasattr(self, "_scan_task") or self._scan_task is None:
+            self._scan_task = self.hass.async_create_task(
+                self._run_dp_scan(hub)
+            )
+
+        if not self._scan_task.done():
+            return self.async_show_progress(
+                step_id="dp_scan",
+                progress_action="dp_scan",
+            )
+
+        # Task finished — check result
+        try:
+            self._scan_task.result()
+        except Exception:
+            _LOGGER.exception("DP scan failed unexpectedly")
+            self._scan_task = None
+            return self.async_show_progress_done(next_step_id="dp_scan_failed")
+
+        self._scan_task = None
+        return self.async_show_progress_done(next_step_id="dp_scan_results")
+
+    async def _run_dp_scan(self, hub) -> None:
+        """Background task: run the actual DP discovery."""
+        try:
+            self._scan_results = await hub.discover_dps()
+            self._scan_error = None
+        except ConnectionError:
+            self._scan_results = []
+            self._scan_error = "cannot_connect"
+        except Exception:
+            _LOGGER.exception("DP scan failed")
+            self._scan_results = []
+            self._scan_error = "scan_failed"
+
+    async def async_step_dp_scan_failed(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Show scan failure."""
+        error = getattr(self, "_scan_error", "scan_failed") or "scan_failed"
+        return self.async_show_form(
+            step_id="dp_scan_failed",
+            data_schema=vol.Schema({}),
+            errors={"base": error},
+            description_placeholders={"count": "0"},
+        )
+
+    async def async_step_dp_scan_results(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Show scan results and let user pick which DPs to add."""
+        hub = self._get_hub()
+        discovered = getattr(self, "_scan_results", []) or []
+
+        if user_input is not None and hub:
+            selected_ids = user_input.get("selected_dps", [])
+            if selected_ids:
+                for dp in discovered:
+                    if str(dp.dp_id) in selected_ids:
+                        await hub.add_manual_dp(
+                            dp_id=dp.dp_id,
+                            name=dp.name or f"DP {dp.dp_id}",
+                            dp_type=dp.dp_type,
+                            entity_type=self._scan_entity_type(dp),
+                        )
+                await self.hass.config_entries.async_reload(
+                    self._config_entry.entry_id
+                )
+            return self.async_create_entry(title="", data={})
+
+        # Check for scan error
+        scan_error = getattr(self, "_scan_error", None)
+        if scan_error:
+            return self.async_show_form(
+                step_id="dp_scan_results",
+                data_schema=vol.Schema({}),
+                errors={"base": scan_error},
+                description_placeholders={"count": "0"},
+            )
+
+        # Build multi-select options (exclude already-configured DPs)
+        existing_ids = set()
+        if hub and hub.profile:
+            existing_ids = set(hub.profile.discovered_dps.keys())
+
+        dp_options: dict[str, str] = {}
+        for dp in discovered:
+            label = f"DP {dp.dp_id}: {dp.name or 'Unknown'} ({dp.dp_type})"
+            if dp.dp_id in existing_ids:
+                label += " [already configured]"
+            dp_options[str(dp.dp_id)] = label
+
+        if not dp_options:
+            return self.async_show_form(
+                step_id="dp_scan_results",
+                data_schema=vol.Schema({}),
+                description_placeholders={"count": "0"},
+            )
+
+        # Pre-select DPs that are NOT already configured
+        default_selected = [
+            str(dp.dp_id) for dp in discovered
+            if dp.dp_id not in existing_ids
+        ]
+
+        return self.async_show_form(
+            step_id="dp_scan_results",
+            data_schema=vol.Schema({
+                vol.Optional(
+                    "selected_dps", default=default_selected
+                ): vol.All(
+                    vol.Ensure(list),
+                    [vol.In(dp_options)],
+                ),
+            }),
+            description_placeholders={"count": str(len(discovered))},
+        )
+
+    @staticmethod
+    def _scan_entity_type(dp) -> str:
+        """Derive default entity type from a DiscoveredDP."""
+        from .dp_registry import _dp_type_to_entity_type
+        if dp.is_known:
+            from .const import KNOWN_DPS
+            known = KNOWN_DPS.get(dp.dp_id, {})
+            return known.get("entity_type", _dp_type_to_entity_type(dp.dp_type))
+        return _dp_type_to_entity_type(dp.dp_type)

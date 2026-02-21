@@ -30,7 +30,8 @@
         "description": "Device: {device_id} at {host} (protocol {version})\n\nEnter the local key for this device.",
         "data": {
           "local_key": "Local Key (16 characters)",
-          "device_name": "Device Name"
+          "device_name": "Device Name",
+          "onvif_password": "ONVIF/RTSP Password (optional)"
         }
       }
     },
@@ -48,13 +49,82 @@
     "step": {
       "init": {
         "title": "LSC Tuya Doorbell Options",
+        "description": "Choose what you want to configure.",
+        "data": {
+          "menu": "Option"
+        }
+      },
+      "connection": {
+        "title": "Connection Settings",
         "description": "Modify connection settings for your doorbell.",
         "data": {
           "host": "IP Address",
           "port": "Port",
           "protocol_version": "Protocol Version"
         }
+      },
+      "dp_list": {
+        "title": "Manage Datapoints",
+        "description": "Your device has {count} configured datapoint(s). Select one to edit or add a new one.",
+        "data": {
+          "dp_select": "Datapoint"
+        }
+      },
+      "dp_edit": {
+        "title": "Edit Datapoint",
+        "description": "Edit datapoint DP {dp_id}: {name}",
+        "data": {
+          "name": "Name",
+          "entity_type": "Entity Type",
+          "delete": "Delete this datapoint"
+        }
+      },
+      "dp_add": {
+        "title": "Add Datapoint",
+        "description": "Add a custom datapoint listener.",
+        "data": {
+          "dp_id": "DP ID (1-255)",
+          "name": "Name",
+          "dp_type": "Data Type",
+          "entity_type": "Entity Type"
+        }
+      },
+      "camera_settings": {
+        "title": "Camera Settings",
+        "description": "Configure RTSP camera stream and snapshot settings.",
+        "data": {
+          "onvif_username": "ONVIF/RTSP Username",
+          "onvif_password": "ONVIF/RTSP Password",
+          "rtsp_port": "RTSP Port",
+          "rtsp_path": "RTSP Stream Path",
+          "snapshot_path": "Snapshot Save Directory"
+        }
+      },
+      "dp_scan": {
+        "title": "Scanning for Datapoints",
+        "description": "Scanning all datapoints (1-255) on the device. This may take a moment...",
+        "progress_action": {
+          "dp_scan": "Scanning datapoints on the device..."
+        }
+      },
+      "dp_scan_failed": {
+        "title": "Scan for Datapoints",
+        "description": "The datapoint scan did not complete successfully."
+      },
+      "dp_scan_results": {
+        "title": "Scan Results",
+        "description": "Found {count} datapoint(s) on the device. Select which to add to your profile.",
+        "data": {
+          "selected_dps": "Datapoints to add"
+        }
       }
+    },
+    "error": {
+      "dp_already_exists": "A datapoint with this ID already exists.",
+      "dp_id_out_of_range": "DP ID must be between 1 and 255.",
+      "device_unavailable": "Device is not connected. Check the connection first.",
+      "cannot_connect": "Could not connect to the device.",
+      "scan_failed": "Datapoint scan failed. Check the logs for details."
     }
   }
 }

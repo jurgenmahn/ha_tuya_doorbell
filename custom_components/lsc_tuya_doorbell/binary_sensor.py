@@ -11,7 +11,7 @@ from homeassistant.components.binary_sensor import (
     BinarySensorEntity,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import async_call_later
@@ -89,6 +89,9 @@ class LscTuyaBinarySensor(LscTuyaEntity, BinarySensorEntity):
         }
         if self._last_image_url:
             attrs["last_image_url"] = self._last_image_url
+        # Expose local RTSP snapshot URL from hub
+        if self._hub.last_snapshot_url:
+            attrs["last_snapshot_url"] = self._hub.last_snapshot_url
         return attrs
 
     def _handle_dp_update(self, value: Any) -> None:
@@ -116,6 +119,7 @@ class LscTuyaBinarySensor(LscTuyaEntity, BinarySensorEntity):
 
         self.async_write_ha_state()
 
+    @callback
     def _auto_reset(self, _now: Any = None) -> None:
         """Reset binary sensor to off after timeout."""
         _LOGGER.debug("BinarySensor DP %d: auto-reset to off", self._dp_id)

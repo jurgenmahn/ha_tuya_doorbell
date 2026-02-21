@@ -4,7 +4,7 @@ discover_devices:
 
 discover_datapoints:
   name: Discover Datapoints
-  description: Scan a device for all available datapoints
+  description: Scan a device for all available datapoints and fire an event with results
   fields:
     device_id:
       name: Device ID
@@ -23,3 +23,104 @@ export_dp_profile:
       required: true
       selector:
         text:
+
+monitor_datapoints:
+  name: Monitor Datapoints
+  description: Listen for passive DP updates from a device for a specified duration
+  fields:
+    device_id:
+      name: Device ID
+      description: The device to monitor
+      required: true
+      selector:
+        text:
+    duration:
+      name: Duration
+      description: How long to monitor in seconds
+      required: false
+      default: 30
+      selector:
+        number:
+          min: 5
+          max: 300
+          unit_of_measurement: seconds
+
+add_datapoint:
+  name: Add Datapoint
+  description: Manually add a datapoint listener to a device
+  fields:
+    device_id:
+      name: Device ID
+      description: The device to add the datapoint to
+      required: true
+      selector:
+        text:
+    dp_id:
+      name: DP ID
+      description: The datapoint ID (1-255)
+      required: true
+      selector:
+        number:
+          min: 1
+          max: 255
+          mode: box
+    name:
+      name: Name
+      description: Friendly name for this datapoint
+      required: true
+      selector:
+        text:
+    dp_type:
+      name: DP Type
+      description: The data type of the datapoint
+      required: true
+      selector:
+        select:
+          options:
+            - label: Boolean
+              value: bool
+            - label: Integer
+              value: int
+            - label: Enum
+              value: enum
+            - label: String
+              value: string
+            - label: Raw
+              value: raw
+    entity_type:
+      name: Entity Type
+      description: The Home Assistant entity type to create
+      required: true
+      selector:
+        select:
+          options:
+            - label: Switch
+              value: switch
+            - label: Sensor
+              value: sensor
+            - label: Select
+              value: select
+            - label: Number
+              value: number
+            - label: Binary Sensor
+              value: binary_sensor
+
+remove_datapoint:
+  name: Remove Datapoint
+  description: Remove a datapoint from a device profile
+  fields:
+    device_id:
+      name: Device ID
+      description: The device to remove the datapoint from
+      required: true
+      selector:
+        text:
+    dp_id:
+      name: DP ID
+      description: The datapoint ID to remove
+      required: true
+      selector:
+        number:
+          min: 1
+          max: 255
+          mode: box

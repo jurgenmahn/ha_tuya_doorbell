@@ -103,7 +103,25 @@ def _register_services(hass: HomeAssistant) -> None:
             if entry_id == "discovery":
                 continue
             if isinstance(hub, DeviceHub) and hub.device_id == device_id:
-                await hub.discover_dps()
+                discovered = await hub.discover_dps()
+                for dp in discovered:
+                    _LOGGER.info(
+                        "Discovered DP %d: %s (type=%s, value=%r)",
+                        dp.dp_id, dp.name, dp.dp_type, dp.value,
+                    )
+                hass.bus.async_fire(f"{DOMAIN}_scan_results", {
+                    "device_id": device_id,
+                    "count": len(discovered),
+                    "dps": {
+                        dp.dp_id: {
+                            "name": dp.name,
+                            "type": dp.dp_type,
+                            "value": str(dp.value),
+                            "is_known": dp.is_known,
+                        }
+                        for dp in discovered
+                    },
+                })
                 return
         _LOGGER.warning("Device %s not found for DP discovery", device_id)
 
@@ -121,6 +139,77 @@ def _register_services(hass: HomeAssistant) -> None:
                     _LOGGER.info("DP Profile export:\n%s", json_str)
                 return
 
+    async def handle_monitor_datapoints(call: ServiceCall) -> None:
+        """Monitor a device for passive DP updates."""
+        from .dp_discovery import DPDiscoveryEngine
+        from .hub import DeviceHub
+        device_id = call.data.get("device_id", "")
+        duration = call.data.get("duration", 30)
+        for entry_id, hub in hass.data.get(DOMAIN, {}).items():
+            if entry_id == "discovery":
+                continue
+            if isinstance(hub, DeviceHub) and hub.device_id == device_id:
+                if not hub.available:
+                    _LOGGER.warning("Device %s not available for monitoring", device_id)
+                    return
+                engine = DPDiscoveryEngine(hub._connection)
+                _LOGGER.info("Starting passive DP monitor for %s (%ds)", device_id, duration)
+                discovered = await engine.monitor_passive(duration=float(duration))
+                for dp in discovered:
+                    _LOGGER.info(
+                        "Monitor found DP %d: %s (type=%s, value=%r)",
+                        dp.dp_id, dp.name, dp.dp_type, dp.value,
+                    )
+                hass.bus.async_fire(f"{DOMAIN}_dp_discovered", {
+                    "device_id": device_id,
+                    "source": "monitor",
+                    "count": len(discovered),
+                    "dps": {
+                        dp.dp_id: {
+                            "name": dp.name,
+                            "type": dp.dp_type,
+                            "value": str(dp.value),
+                        }
+                        for dp in discovered
+                    },
+                })
+                return
+        _LOGGER.warning("Device %s not found for DP monitoring", device_id)
+
+    async def handle_add_datapoint(call: ServiceCall) -> None:
+        """Add a manual datapoint to a device."""
+        from .hub import DeviceHub
+        device_id = call.data.get("device_id", "")
+        dp_id = call.data.get("dp_id")
+        name = call.data.get("name", f"DP {dp_id}")
+        dp_type = call.data.get("dp_type", "bool")
+        entity_type = call.data.get("entity_type", "switch")
+        for entry_id, hub in hass.data.get(DOMAIN, {}).items():
+            if entry_id == "discovery":
+                continue
+            if isinstance(hub, DeviceHub) and hub.device_id == device_id:
+                await hub.add_manual_dp(dp_id, name, dp_type, entity_type)
+                await hass.config_entries.async_reload(hub._config_entry.entry_id)
+                return
+        _LOGGER.warning("Device %s not found for add_datapoint", device_id)
+
+    async def handle_remove_datapoint(call: ServiceCall) -> None:
+        """Remove a datapoint from a device."""
+        from .hub import DeviceHub
+        device_id = call.data.get("device_id", "")
+        dp_id = call.data.get("dp_id")
+        for entry_id, hub in hass.data.get(DOMAIN, {}).items():
+            if entry_id == "discovery":
+                continue
+            if isinstance(hub, DeviceHub) and hub.device_id == device_id:
+                await hub.remove_dp(dp_id)
+                await hass.config_entries.async_reload(hub._config_entry.entry_id)
+                return
+        _LOGGER.warning("Device %s not found for remove_datapoint", device_id)
+
     hass.services.async_register(DOMAIN, "discover_devices", handle_discover_devices)
     hass.services.async_register(DOMAIN, "discover_datapoints", handle_discover_datapoints)
     hass.services.async_register(DOMAIN, "export_dp_profile", handle_export_dp_profile)
+    hass.services.async_register(DOMAIN, "monitor_datapoints", handle_monitor_datapoints)
+    hass.services.async_register(DOMAIN, "add_datapoint", handle_add_datapoint)
+    hass.services.async_register(DOMAIN, "remove_datapoint", handle_remove_datapoint)

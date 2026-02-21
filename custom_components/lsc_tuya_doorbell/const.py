@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 DOMAIN = "lsc_tuya_doorbell"
-VERSION = "2.0.0"
+VERSION = "2.2.0"
 
 # Connection defaults
 DEFAULT_PORT = 6668
@@ -41,6 +41,17 @@ CONF_PROTOCOL_VERSION = "protocol_version"
 CONF_DEVICE_NAME = "device_name"
 CONF_DP_OVERRIDES = "dp_overrides"
 CONF_EVENT_RESET_TIMEOUT = "event_reset_timeout"
+CONF_ONVIF_USERNAME = "onvif_username"
+CONF_ONVIF_PASSWORD = "onvif_password"
+CONF_RTSP_PORT = "rtsp_port"
+CONF_RTSP_PATH = "rtsp_path"
+CONF_SNAPSHOT_PATH = "snapshot_path"
+
+DEFAULT_ONVIF_USERNAME = "admin"
+DEFAULT_RTSP_PORT = 8554
+DEFAULT_RTSP_PATH = "/Streaming/Channels/101"
+DEFAULT_SNAPSHOT_PATH = "/config/www/doorbell"
+MAX_SNAPSHOTS = 10
 
 # DP types
 DP_TYPE_BOOL = "bool"
@@ -87,7 +98,7 @@ EVENT_IP_CHANGED = f"{DOMAIN}_ip_changed"
 EVENT_DP_DISCOVERED = f"{DOMAIN}_dp_discovered"
 
 # Platforms
-PLATFORMS = ["binary_sensor", "sensor", "switch", "select", "number"]
+PLATFORMS = ["binary_sensor", "sensor", "switch", "select", "number", "camera"]
 
 # SD Card status mapping
 SD_STATUS_MAP = {
@@ -115,18 +126,17 @@ KNOWN_DPS_V4: dict[int, dict] = {
         "entity_type": ENTITY_SELECT,
         "options": {"0": "low", "1": "medium", "2": "high"},
     },
-    108: {"name": "Basic OSD", "dp_type": DP_TYPE_BOOL, "entity_type": ENTITY_SWITCH},
+    108: {
+        "name": "Basic OSD",
+        "dp_type": DP_TYPE_ENUM,
+        "entity_type": ENTITY_SELECT,
+        "options": {"0": "off", "1": "on"},
+    },
+    109: {"name": "SD Storage Info", "dp_type": DP_TYPE_STRING, "entity_type": ENTITY_SENSOR},
     110: {"name": "SD Card Status", "dp_type": DP_TYPE_INT, "entity_type": ENTITY_SENSOR},
     115: {"name": "Motion Detection", "dp_type": DP_TYPE_RAW, "entity_type": ENTITY_BINARY_SENSOR, "is_event": True},
     134: {"name": "Vision Flip", "dp_type": DP_TYPE_BOOL, "entity_type": ENTITY_SWITCH},
-    149: {"name": "Chime Switch", "dp_type": DP_TYPE_BOOL, "entity_type": ENTITY_SWITCH},
-    150: {
-        "name": "Chime Volume",
-        "dp_type": DP_TYPE_INT,
-        "entity_type": ENTITY_NUMBER,
-        "min": 0,
-        "max": 10,
-    },
+    150: {"name": "Chime Switch", "dp_type": DP_TYPE_BOOL, "entity_type": ENTITY_SWITCH},
     151: {
         "name": "Recording Mode",
         "dp_type": DP_TYPE_ENUM,
