@@ -47,21 +47,25 @@ class LscTuyaEntity(RestoreEntity):
 
     async def async_added_to_hass(self) -> None:
         """Called when entity is added to HA."""
+        _LOGGER.debug("Entity added: %s (DP %d)", self._attr_unique_id, self._dp_id)
         # Register callback with hub
         self._hub.register_entity(self._dp_id, self._handle_dp_update)
 
         # Restore previous state
         last_state = await self.async_get_last_state()
         if last_state is not None:
+            _LOGGER.debug("Entity %s: restoring previous state", self._attr_unique_id)
             self._restore_state(last_state)
 
         # Get current value from hub
         current = self._hub.get_dp_state(self._dp_id)
         if current is not None:
+            _LOGGER.debug("Entity %s: current DP state = %r", self._attr_unique_id, current)
             self._state_value = current
 
     async def async_will_remove_from_hass(self) -> None:
         """Called when entity is being removed."""
+        _LOGGER.debug("Entity removed: %s (DP %d)", self._attr_unique_id, self._dp_id)
         self._hub.unregister_entity(self._dp_id, self._handle_dp_update)
         if self._manual_update_handle:
             self._manual_update_handle.cancel()

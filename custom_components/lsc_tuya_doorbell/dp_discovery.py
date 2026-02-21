@@ -86,11 +86,13 @@ class DPDiscoveryEngine:
                 dp_ids = list(range(batch_start, batch_end))
 
                 try:
+                    _LOGGER.debug("DP scan batch %d-%d", batch_start, batch_end - 1)
                     result = await self._connection.update_dps(dp_ids)
                     for dp_str, value in result.items():
                         dp_id = int(dp_str)
                         if dp_id not in found:
                             found[dp_id] = self.classify_dp(dp_id, value)
+                            _LOGGER.debug("DP scan: found DP %d = %r (%s)", dp_id, value, found[dp_id].dp_type)
                 except Exception:
                     pass
 

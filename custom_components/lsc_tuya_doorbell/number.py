@@ -33,6 +33,7 @@ async def async_setup_entry(
             if dp_def.entity_type == ENTITY_NUMBER:
                 entities.append(LscTuyaNumber(hub, dp_def))
 
+    _LOGGER.debug("Number setup: creating %d entities: %s", len(entities), [e._dp_id for e in entities])
     async_add_entities(entities)
 
 
@@ -60,6 +61,7 @@ class LscTuyaNumber(LscTuyaEntity, NumberEntity):
     async def async_set_native_value(self, value: float) -> None:
         """Set a new value."""
         int_value = int(value)
+        _LOGGER.debug("Number DP %d: setting value=%d", self._dp_id, int_value)
         self._set_manual_update()
         self._state_value = int_value
         self.async_write_ha_state()
@@ -70,5 +72,6 @@ class LscTuyaNumber(LscTuyaEntity, NumberEntity):
         if last_state.state not in (None, "unknown", "unavailable"):
             try:
                 self._state_value = int(float(last_state.state))
+                _LOGGER.debug("Number DP %d: restored value=%s", self._dp_id, self._state_value)
             except (ValueError, TypeError):
                 pass

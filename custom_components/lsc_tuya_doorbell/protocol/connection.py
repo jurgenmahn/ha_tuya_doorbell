@@ -121,6 +121,7 @@ class TuyaConnection:
 
     async def disconnect(self) -> None:
         """Gracefully close the connection."""
+        _LOGGER.debug("Disconnecting from %s:%s", self._host, self._port)
         self._connected = False
 
         # Cancel read loop
@@ -159,10 +160,12 @@ class TuyaConnection:
             seqno = self._codec.next_seqno()
             packet = self._codec.encode(command, payload, seqno=seqno)
 
+            _LOGGER.debug("Send: cmd=%d seqno=%d (%d bytes) to %s:%s", command, seqno, len(packet), self._host, self._port)
             try:
                 self._writer.write(packet)
                 await self._writer.drain()
             except (OSError, ConnectionError) as err:
+                _LOGGER.debug("Send failed: %s", err)
                 self._connected = False
                 raise ConnectionError(f"Send failed: {err}") from err
 
@@ -189,9 +192,13 @@ class TuyaConnection:
         cmd_key = f"cmd_{command}"
         self._pending_responses[cmd_key] = future
 
+        _LOGGER.debug("SendAndWait: waiting for response cmd=%d seqno=%d timeout=%.1fs", command, seqno, timeout)
         try:
-            return await asyncio.wait_for(future, timeout=timeout)
+            msg = await asyncio.wait_for(future, timeout=timeout)
+            _LOGGER.debug("SendAndWait: got response cmd=%d seqno=%d retcode=%s", msg.command, msg.seqno, msg.retcode)
+            return msg
         except asyncio.TimeoutError:
+            _LOGGER.debug("SendAndWait: timeout for cmd=%d seqno=%d", command, seqno)
             raise TimeoutError(f"No response for command {command} (seq {seqno})")
         finally:
             self._pending_responses.pop(seqno, None)
@@ -199,11 +206,15 @@ class TuyaConnection:
 
     async def heartbeat(self) -> bool:
         """Send a heartbeat and wait for response. Returns True if successful."""
+        _LOGGER.debug("Heartbeat: sending to %s:%s", self._host, self._port)
         try:
             msg = await self.send_and_wait(Command.HEARTBEAT, timeout=RESPONSE_TIMEOUT)
             self._last_heartbeat = time.monotonic()
-            return msg.command == Command.HEARTBEAT
-        except (TimeoutError, ConnectionError):
+            ok = msg.command == Command.HEARTBEAT
+            _LOGGER.debug("Heartbeat: %s", "OK" if ok else "unexpected response cmd=%d" % msg.command)
+            return ok
+        except (TimeoutError, ConnectionError) as err:
+            _LOGGER.debug("Heartbeat: failed — %s", err)
             return False
 
     async def query_dps(self, dp_ids: list[int] | None = None) -> dict:
@@ -222,6 +233,7 @@ class TuyaConnection:
                 "dps": {str(dp): None for dp in (dp_ids or [1])},
             }
             cmd = Command.CONTROL_NEW
+            _LOGGER.debug("QueryDPS: device22 mode, using CONTROL_NEW, dps=%s", list(payload["dps"].keys()))
         else:
             payload = {
                 "gwId": self._device_id,
@@ -232,6 +244,7 @@ class TuyaConnection:
             if dp_ids:
                 payload["dps"] = {str(dp): None for dp in dp_ids}
             cmd = Command.DP_QUERY
+            _LOGGER.debug("QueryDPS: standard mode, using DP_QUERY, dp_ids=%s", dp_ids)
 
         try:
             if self._is_device22:
@@ -320,6 +333,7 @@ class TuyaConnection:
         _LOGGER.debug("Starting session key negotiation (protocol %s)", self._version)
 
         client_nonce = TuyaCipher.generate_nonce()
+        _LOGGER.debug("SessionNeg: client nonce generated (%d bytes)", len(client_nonce))
 
         # Step 1: Send client nonce
         async with self._write_lock:
@@ -343,6 +357,7 @@ class TuyaConnection:
 
         device_msg = messages[0]
         device_nonce = device_msg.payload
+        _LOGGER.debug("SessionNeg: received device nonce (%d bytes)", len(device_nonce) if device_nonce else 0)
 
         if not device_nonce or len(device_nonce) < 16:
             raise ConnectionError(f"Invalid device nonce (length {len(device_nonce) if device_nonce else 0})")
@@ -356,9 +371,11 @@ class TuyaConnection:
             session_key = self._cipher.derive_session_key_v34(client_nonce, device_nonce)
 
         self._codec.session_key = session_key
+        _LOGGER.debug("SessionNeg: session key set")
 
         # Step 3: Send HMAC of device nonce to confirm
         hmac_val = TuyaCipher.calc_hmac(session_key, device_nonce)
+        _LOGGER.debug("SessionNeg: sending HMAC confirmation (%d bytes)", len(hmac_val))
 
         async with self._write_lock:
             seqno = self._codec.next_seqno()
@@ -386,9 +403,10 @@ class TuyaConnection:
                     continue
 
                 if not data:
-                    _LOGGER.debug("Connection closed by device")
+                    _LOGGER.debug("ReadLoop: connection closed by device (empty read)")
                     break
 
+                _LOGGER.debug("ReadLoop: received %d bytes from %s:%s", len(data), self._host, self._port)
                 messages = self._codec.feed(data)
                 for msg in messages:
                     self._dispatch_message(msg)
@@ -409,8 +427,15 @@ class TuyaConnection:
 
     def _dispatch_message(self, msg: TuyaMessage) -> None:
         """Route a received message to the appropriate handler."""
+        _LOGGER.debug(
+            "Dispatch: seqno=%d cmd=%d retcode=%s payload=%d bytes pending_keys=%s",
+            msg.seqno, msg.command, msg.retcode, len(msg.payload),
+            list(self._pending_responses.keys()),
+        )
+
         # Check if this is a response to a pending request (by seqno)
         if msg.seqno in self._pending_responses:
+            _LOGGER.debug("Dispatch: matched by seqno=%d", msg.seqno)
             fut = self._pending_responses.pop(msg.seqno)
             # Also clean up the command-based key
             cmd_key = f"cmd_{msg.command}"
@@ -422,6 +447,7 @@ class TuyaConnection:
         # Check by command type (fallback for devices that return seqno=0)
         cmd_key = f"cmd_{msg.command}"
         if cmd_key in self._pending_responses:
+            _LOGGER.debug("Dispatch: matched by cmd_key=%s", cmd_key)
             fut = self._pending_responses.pop(cmd_key)
             if not fut.done():
                 fut.set_result(msg)
@@ -431,12 +457,18 @@ class TuyaConnection:
         if msg.command in (Command.STATUS, Command.CONTROL, Command.CONTROL_NEW, Command.UPDATEDPS, Command.DP_QUERY):
             dps = msg.data.get("dps", {})
             if dps:
+                _LOGGER.debug("Dispatch: push update with DPS=%s", dps)
                 for callback in self._on_status_update:
                     try:
                         callback(dps)
                     except Exception:
                         _LOGGER.debug("Status update callback error", exc_info=True)
+            else:
+                _LOGGER.debug("Dispatch: push cmd=%d with empty DPS (ack)", msg.command)
 
         # Heartbeat responses without a pending future (device-initiated)
         elif msg.command == Command.HEARTBEAT:
+            _LOGGER.debug("Dispatch: device-initiated heartbeat response")
             self._last_heartbeat = time.monotonic()
+        else:
+            _LOGGER.debug("Dispatch: unhandled cmd=%d (no pending, not a push)", msg.command)

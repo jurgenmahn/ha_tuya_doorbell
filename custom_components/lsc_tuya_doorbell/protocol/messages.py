@@ -92,9 +92,15 @@ class MessageCodec:
         if seqno is None:
             seqno = self.next_seqno()
 
+        _LOGGER.debug("Encode: cmd=%d seqno=%d version=%s payload_type=%s", command, seqno, self._version, type(payload).__name__)
+
         if self._version == ProtocolVersion.V35:
-            return self._encode_v35(command, payload, seqno)
-        return self._encode_v33_v34(command, payload, seqno)
+            result = self._encode_v35(command, payload, seqno)
+        else:
+            result = self._encode_v33_v34(command, payload, seqno)
+
+        _LOGGER.debug("Encode: %d bytes packet", len(result))
+        return result
 
     def _encode_v33_v34(
         self,
@@ -265,12 +271,17 @@ class MessageCodec:
                     _LOGGER.debug("Decryption failed, returning raw payload")
                     payload = encrypted
 
-        return TuyaMessage(
+        msg = TuyaMessage(
             seqno=seqno,
             command=command,
             retcode=retcode if retcode != 0 else None,
             payload=payload,
         )
+        _LOGGER.debug(
+            "Decode v33/v34: seqno=%d cmd=%d retcode=%s payload=%d bytes data_keys=%s",
+            msg.seqno, msg.command, msg.retcode, len(msg.payload), list(msg.data.keys()) if msg.data else [],
+        )
+        return msg
 
     def _decode_v35(self, data: bytes) -> TuyaMessage:
         """Decode a v3.5 (6699) packet."""
@@ -296,12 +307,17 @@ class MessageCodec:
             _LOGGER.debug("GCM decryption failed, returning raw payload")
             payload = ciphertext
 
-        return TuyaMessage(
+        msg = TuyaMessage(
             seqno=seqno,
             command=command,
             retcode=retcode if retcode != 0 else None,
             payload=payload,
         )
+        _LOGGER.debug(
+            "Decode v35: seqno=%d cmd=%d retcode=%s payload=%d bytes data_keys=%s",
+            msg.seqno, msg.command, msg.retcode, len(msg.payload), list(msg.data.keys()) if msg.data else [],
+        )
+        return msg
 
     def feed(self, data: bytes) -> list[TuyaMessage]:
         """Feed raw TCP data into the reassembly buffer.
@@ -309,6 +325,7 @@ class MessageCodec:
         Returns a list of zero or more complete decoded messages.
         Handles partial reads and multiple messages in a single read.
         """
+        _LOGGER.debug("Feed: %d bytes received, buffer=%d bytes", len(data), len(self._buffer))
         self._buffer.extend(data)
         messages = []
 
@@ -318,6 +335,8 @@ class MessageCodec:
                 break
             messages.append(msg)
 
+        if messages:
+            _LOGGER.debug("Feed: extracted %d message(s), buffer=%d bytes remaining", len(messages), len(self._buffer))
         return messages
 
     def _try_extract_message(self) -> TuyaMessage | None:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import logging
 import os
 import struct
 from typing import TYPE_CHECKING
@@ -15,6 +16,8 @@ from .constants import GCM_NONCE_SIZE, UDP_KEY
 
 if TYPE_CHECKING:
     pass
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class TuyaCipher:
@@ -36,18 +39,24 @@ class TuyaCipher:
     def encrypt_ecb(self, plaintext: bytes, key: bytes | None = None) -> bytes:
         """Encrypt data using AES-128-ECB with PKCS7 padding."""
         use_key = key or self._local_key
+        _LOGGER.debug("ECB encrypt: %d bytes plaintext (key=%s)", len(plaintext), "session" if key else "local")
         padded = self._pkcs7_pad(plaintext, 16)
         cipher = Cipher(algorithms.AES(use_key), modes.ECB())
         encryptor = cipher.encryptor()
-        return encryptor.update(padded) + encryptor.finalize()
+        result = encryptor.update(padded) + encryptor.finalize()
+        _LOGGER.debug("ECB encrypt: %d bytes ciphertext", len(result))
+        return result
 
     def decrypt_ecb(self, ciphertext: bytes, key: bytes | None = None) -> bytes:
         """Decrypt data using AES-128-ECB with PKCS7 unpadding."""
         use_key = key or self._local_key
+        _LOGGER.debug("ECB decrypt: %d bytes ciphertext (key=%s)", len(ciphertext), "session" if key else "local")
         cipher = Cipher(algorithms.AES(use_key), modes.ECB())
         decryptor = cipher.decryptor()
         padded = decryptor.update(ciphertext) + decryptor.finalize()
-        return self._pkcs7_unpad(padded)
+        result = self._pkcs7_unpad(padded)
+        _LOGGER.debug("ECB decrypt: %d bytes plaintext", len(result))
+        return result
 
     # --- AES-GCM operations (v3.5) ---
 
@@ -55,19 +64,24 @@ class TuyaCipher:
         self, plaintext: bytes, key: bytes, iv: bytes, aad: bytes | None = None
     ) -> tuple[bytes, bytes]:
         """Encrypt data using AES-128-GCM. Returns (ciphertext, tag)."""
+        _LOGGER.debug("GCM encrypt: %d bytes plaintext, iv=%s", len(plaintext), iv.hex())
         aesgcm = AESGCM(key)
         ct_with_tag = aesgcm.encrypt(iv, plaintext, aad)
         # AESGCM appends 16-byte tag to ciphertext
         ciphertext = ct_with_tag[:-16]
         tag = ct_with_tag[-16:]
+        _LOGGER.debug("GCM encrypt: %d bytes ciphertext, tag=%s", len(ciphertext), tag.hex())
         return ciphertext, tag
 
     def decrypt_gcm(
         self, ciphertext: bytes, key: bytes, iv: bytes, tag: bytes, aad: bytes | None = None
     ) -> bytes:
         """Decrypt data using AES-128-GCM."""
+        _LOGGER.debug("GCM decrypt: %d bytes ciphertext, iv=%s", len(ciphertext), iv.hex())
         aesgcm = AESGCM(key)
-        return aesgcm.decrypt(iv, ciphertext + tag, aad)
+        result = aesgcm.decrypt(iv, ciphertext + tag, aad)
+        _LOGGER.debug("GCM decrypt: %d bytes plaintext", len(result))
+        return result
 
     # --- Integrity verification ---
 
@@ -89,6 +103,7 @@ class TuyaCipher:
     @staticmethod
     def decrypt_udp(data: bytes) -> bytes:
         """Decrypt UDP broadcast data using the fixed UDP key (AES-ECB)."""
+        _LOGGER.debug("UDP decrypt: %d bytes", len(data))
         cipher = Cipher(algorithms.AES(UDP_KEY), modes.ECB())
         decryptor = cipher.decryptor()
         padded = decryptor.update(data) + decryptor.finalize()
@@ -103,11 +118,14 @@ class TuyaCipher:
 
     def derive_session_key_v34(self, client_nonce: bytes, device_nonce: bytes) -> bytes:
         """Derive session key for v3.4: AES_ECB(local_key, client_nonce XOR device_nonce)."""
+        _LOGGER.debug("Deriving v3.4 session key from nonces")
         xored = bytes(a ^ b for a, b in zip(client_nonce, device_nonce))
         # Encrypt without padding — input is already 16 bytes
         cipher = Cipher(algorithms.AES(self._local_key), modes.ECB())
         encryptor = cipher.encryptor()
-        return encryptor.update(xored) + encryptor.finalize()
+        result = encryptor.update(xored) + encryptor.finalize()
+        _LOGGER.debug("v3.4 session key derived: %s...%s", result[:4].hex(), result[-4:].hex())
+        return result
 
     def derive_session_key_v35(self, client_nonce: bytes, device_nonce: bytes) -> bytes:
         """Derive session key for v3.5 using AES-GCM.
@@ -115,12 +133,15 @@ class TuyaCipher:
         XOR nonces, encrypt with local_key using AES-GCM,
         IV = client_nonce[:12], take bytes [0:16] of ciphertext.
         """
+        _LOGGER.debug("Deriving v3.5 session key from nonces (GCM)")
         xored = bytes(a ^ b for a, b in zip(client_nonce, device_nonce))
         iv = client_nonce[:GCM_NONCE_SIZE]
         aesgcm = AESGCM(self._local_key)
         ct_with_tag = aesgcm.encrypt(iv, xored, None)
         # Take first 16 bytes of ciphertext (excluding tag)
-        return ct_with_tag[:16]
+        result = ct_with_tag[:16]
+        _LOGGER.debug("v3.5 session key derived: %s...%s", result[:4].hex(), result[-4:].hex())
+        return result
 
     # --- PKCS7 padding ---
 

@@ -33,6 +33,7 @@ async def async_setup_entry(
             if dp_def.entity_type == ENTITY_SELECT:
                 entities.append(LscTuyaSelect(hub, dp_def))
 
+    _LOGGER.debug("Select setup: creating %d entities: %s", len(entities), [e._dp_id for e in entities])
     async_add_entities(entities)
 
 
@@ -73,6 +74,7 @@ class LscTuyaSelect(LscTuyaEntity, SelectEntity):
     async def async_select_option(self, option: str) -> None:
         """Change the selected option."""
         tuya_val = self._label_to_tuya.get(option, option)
+        _LOGGER.debug("Select DP %d: selecting '%s' (tuya_val=%s)", self._dp_id, option, tuya_val)
 
         self._set_manual_update()
         self._state_value = tuya_val
@@ -85,3 +87,4 @@ class LscTuyaSelect(LscTuyaEntity, SelectEntity):
             # Convert label back to tuya value
             tuya_val = self._label_to_tuya.get(last_state.state, last_state.state)
             self._state_value = tuya_val
+            _LOGGER.debug("Select DP %d: restored state=%s (tuya_val=%s)", self._dp_id, last_state.state, tuya_val)

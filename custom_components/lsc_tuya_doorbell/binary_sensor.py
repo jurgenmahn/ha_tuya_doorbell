@@ -52,6 +52,7 @@ async def async_setup_entry(
             if dp_def:
                 entities.append(LscTuyaBinarySensor(hub, dp_def))
 
+    _LOGGER.debug("BinarySensor setup: creating %d entities: %s", len(entities), [e._dp_id for e in entities])
     async_add_entities(entities)
 
 
@@ -92,6 +93,7 @@ class LscTuyaBinarySensor(LscTuyaEntity, BinarySensorEntity):
 
     def _handle_dp_update(self, value: Any) -> None:
         """Handle event DP update — turn on and schedule auto-reset."""
+        _LOGGER.debug("BinarySensor DP %d: triggered (counter=%d, value=%r)", self._dp_id, self._event_counter + 1, value)
         self._is_on = True
         self._event_counter += 1
 
@@ -116,6 +118,7 @@ class LscTuyaBinarySensor(LscTuyaEntity, BinarySensorEntity):
 
     def _auto_reset(self, _now: Any = None) -> None:
         """Reset binary sensor to off after timeout."""
+        _LOGGER.debug("BinarySensor DP %d: auto-reset to off", self._dp_id)
         self._is_on = False
         self._reset_handle = None
         self.async_write_ha_state()
@@ -126,3 +129,4 @@ class LscTuyaBinarySensor(LscTuyaEntity, BinarySensorEntity):
         if last_state.attributes:
             self._event_counter = last_state.attributes.get("event_counter", 0)
             self._last_image_url = last_state.attributes.get("last_image_url")
+        _LOGGER.debug("BinarySensor DP %d: restored (counter=%d)", self._dp_id, self._event_counter)

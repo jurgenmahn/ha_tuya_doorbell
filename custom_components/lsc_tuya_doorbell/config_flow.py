@@ -80,8 +80,10 @@ class LscTuyaDoorbellConfigFlow(ConfigFlow, domain=DOMAIN):
             return await self.async_step_manual()
 
         # Run UDP discovery
+        _LOGGER.debug("ConfigFlow: starting UDP discovery scan (10s)")
         listener = UDPDiscoveryListener()
         devices = await listener.scan(timeout=10.0)
+        _LOGGER.debug("ConfigFlow: discovery found %d device(s)", len(devices))
 
         if not devices:
             return self.async_show_form(
@@ -175,17 +177,22 @@ class LscTuyaDoorbellConfigFlow(ConfigFlow, domain=DOMAIN):
         errors = {}
 
         # Test connection
+        _LOGGER.debug("ConfigFlow: testing connection to %s:%s (device=%s, version=%s)", self._host, self._port, self._device_id, self._version)
         conn = TuyaConnection(
             self._host, self._port, self._device_id, self._local_key, self._version
         )
         try:
             await conn.connect()
+            _LOGGER.debug("ConfigFlow: connected, testing heartbeat")
             ok = await conn.heartbeat()
             if not ok:
+                _LOGGER.debug("ConfigFlow: heartbeat failed")
                 errors["base"] = "heartbeat_failed"
             else:
                 # Quick DP query
+                _LOGGER.debug("ConfigFlow: heartbeat OK, querying DPs")
                 dps = await conn.query_dps()
+                _LOGGER.debug("ConfigFlow: query returned %d DPs", len(dps) if dps else 0)
                 await conn.disconnect()
 
                 # Check unique ID

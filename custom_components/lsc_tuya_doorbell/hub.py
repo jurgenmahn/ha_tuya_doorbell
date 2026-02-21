@@ -135,12 +135,14 @@ class DeviceHub:
     def register_entity(self, dp_id: int, callback: Callable[[Any], None]) -> None:
         """Register an entity callback for a specific DP."""
         self._entity_callbacks.setdefault(dp_id, []).append(callback)
+        _LOGGER.debug("Entity registered for DP %d (total callbacks: %d)", dp_id, len(self._entity_callbacks[dp_id]))
 
     def unregister_entity(self, dp_id: int, callback: Callable[[Any], None]) -> None:
         """Unregister an entity callback."""
         callbacks = self._entity_callbacks.get(dp_id, [])
         if callback in callbacks:
             callbacks.remove(callback)
+            _LOGGER.debug("Entity unregistered for DP %d (remaining: %d)", dp_id, len(callbacks))
 
     async def async_setup(self) -> bool:
         """Set up the device hub: connect, load profile, start heartbeat."""
@@ -171,16 +173,22 @@ class DeviceHub:
             await self._connection.connect()
             self._available = True
             self._heartbeat_failures = 0
+            _LOGGER.debug("Connected to %s:%s, firing connected event", self._host, self._port)
             self._fire_event(EVENT_CONNECTED)
 
             # Start heartbeat
             self._heartbeat_task = asyncio.ensure_future(self._heartbeat_loop())
+            _LOGGER.debug("Heartbeat loop started")
 
             # Query initial state
             try:
+                _LOGGER.debug("Querying initial DP state")
                 dps = await self._connection.query_dps()
                 if dps:
+                    _LOGGER.debug("Initial DPS: %s", dps)
                     self._handle_status_update(dps)
+                else:
+                    _LOGGER.debug("Initial DP query returned empty")
             except Exception:
                 _LOGGER.debug("Initial DP query failed", exc_info=True)
 
@@ -226,10 +234,14 @@ class DeviceHub:
             _LOGGER.warning("Cannot set DP %s: device not available", dp_id)
             return
 
+        _LOGGER.debug("SetDP: dp=%d value=%r (%s)", dp_id, value, type(value).__name__)
         dps = {str(dp_id): value}
         result = await self._connection.set_dps(dps)
         if result:
+            _LOGGER.debug("SetDP: device confirmed DPS=%s", result)
             self._handle_status_update(result)
+        else:
+            _LOGGER.debug("SetDP: no confirmation data from device")
 
     async def discover_dps(self) -> list[DiscoveredDP]:
         """Run a full DP discovery scan."""
@@ -264,10 +276,13 @@ class DeviceHub:
 
     def _handle_status_update(self, dps: dict) -> None:
         """Process incoming DPS updates from the device."""
+        _LOGGER.debug("StatusUpdate: received DPS=%s", dps)
         for dp_str, raw_value in dps.items():
             dp_id = int(dp_str)
             value = self._normalize_value(dp_id, raw_value)
+            old_value = self._dps_state.get(dp_str)
             self._dps_state[dp_str] = value
+            _LOGGER.debug("StatusUpdate: DP %s: %r -> %r (raw=%r)", dp_str, old_value, value, raw_value)
 
             # Check for event DPs
             if dp_id == DP_DOORBELL_BUTTON:
@@ -289,6 +304,7 @@ class DeviceHub:
 
         image_url = self._extract_image_url(value)
         slug = self._device_name_slug()
+        _LOGGER.debug("Event: type=%s dp=%d counter=%d image_url=%s", event_type, dp_id, counter, image_url)
 
         self._fire_event(f"{event_type}_{slug}", {
             "device_id": self._device_id,
@@ -540,6 +556,7 @@ class DeviceHub:
         event_data = {"device_id": self._device_id}
         if data:
             event_data.update(data)
+        _LOGGER.debug("FireEvent: %s data=%s", event_type, event_data)
         self._hass.bus.async_fire(event_type, event_data)
 
     def _device_name_slug(self) -> str:

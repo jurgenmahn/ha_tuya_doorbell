@@ -25,28 +25,34 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     from .discovery.manager import DiscoveryManager
     from .hub import DeviceHub
 
+    _LOGGER.debug("Setting up config entry %s", entry.entry_id)
     hass.data.setdefault(DOMAIN, {})
 
     # Shared discovery manager (singleton per HA instance)
     if "discovery" not in hass.data[DOMAIN]:
+        _LOGGER.debug("Creating shared discovery manager")
         discovery = DiscoveryManager()
         await discovery.start_background_listener()
         hass.data[DOMAIN]["discovery"] = discovery
     discovery = hass.data[DOMAIN]["discovery"]
 
     # Create hub for this device
+    _LOGGER.debug("Creating hub for device %s", entry.data.get("device_id", "?"))
     hub = DeviceHub(hass, entry, discovery)
     await hub.async_setup()
 
     hass.data[DOMAIN][entry.entry_id] = hub
 
     # Forward platform setup
+    _LOGGER.debug("Forwarding platform setup: %s", PLATFORMS)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     # Register services (only once)
     if not hass.services.has_service(DOMAIN, "discover_devices"):
+        _LOGGER.debug("Registering integration services")
         _register_services(hass)
 
+    _LOGGER.debug("Config entry %s setup complete", entry.entry_id)
     return True
 
 
@@ -55,8 +61,11 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     from .discovery.manager import DiscoveryManager
     from .hub import DeviceHub
 
+    _LOGGER.debug("Unloading config entry %s", entry.entry_id)
+
     # Unload platforms
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    _LOGGER.debug("Platform unload: %s", "OK" if unload_ok else "FAILED")
 
     if unload_ok:
         hub: DeviceHub = hass.data[DOMAIN].pop(entry.entry_id)
@@ -68,6 +77,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         if eid != "discovery"
     ]
     if not remaining and "discovery" in hass.data[DOMAIN]:
+        _LOGGER.debug("No more entries, stopping discovery manager")
         discovery: DiscoveryManager = hass.data[DOMAIN].pop("discovery")
         await discovery.stop()
 

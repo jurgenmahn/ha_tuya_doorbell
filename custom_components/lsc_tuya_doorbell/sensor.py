@@ -33,6 +33,7 @@ async def async_setup_entry(
             if dp_def.entity_type == ENTITY_SENSOR:
                 entities.append(LscTuyaSensor(hub, dp_def))
 
+    _LOGGER.debug("Sensor setup: creating %d entities: %s", len(entities), [e._dp_id for e in entities])
     async_add_entities(entities)
 
 
@@ -70,3 +71,4 @@ class LscTuyaSensor(LscTuyaEntity, SensorEntity):
         """Restore previous sensor state."""
         if last_state.state not in (None, "unknown", "unavailable"):
             self._state_value = last_state.state
+            _LOGGER.debug("Sensor DP %d: restored value=%s", self._dp_id, self._state_value)

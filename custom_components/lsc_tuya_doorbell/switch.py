@@ -33,6 +33,7 @@ async def async_setup_entry(
             if dp_def.entity_type == ENTITY_SWITCH:
                 entities.append(LscTuyaSwitch(hub, dp_def))
 
+    _LOGGER.debug("Switch setup: creating %d entities: %s", len(entities), [e._dp_id for e in entities])
     async_add_entities(entities)
 
 
@@ -53,6 +54,7 @@ class LscTuyaSwitch(LscTuyaEntity, SwitchEntity):
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn the switch on."""
+        _LOGGER.debug("Switch DP %d: turning ON", self._dp_id)
         self._set_manual_update()
         self._state_value = True
         self.async_write_ha_state()
@@ -60,6 +62,7 @@ class LscTuyaSwitch(LscTuyaEntity, SwitchEntity):
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn the switch off."""
+        _LOGGER.debug("Switch DP %d: turning OFF", self._dp_id)
         self._set_manual_update()
         self._state_value = False
         self.async_write_ha_state()
@@ -71,3 +74,4 @@ class LscTuyaSwitch(LscTuyaEntity, SwitchEntity):
             self._state_value = True
         elif last_state.state == "off":
             self._state_value = False
+        _LOGGER.debug("Switch DP %d: restored state=%s", self._dp_id, self._state_value)
