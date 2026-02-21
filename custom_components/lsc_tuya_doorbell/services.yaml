@@ -1,19 +1,25 @@
-get_image_url:
-  description: Generate full image URL from path
-  fields:
-    path:
-      description: Image path from event payload
-      example: "/acc84e-53404544-pp01e25a0ef823011882/detect/1739487304.jpeg"
-      required: true
-    bucket:
-      description: Storage bucket name (defaults to ty-us-storage30-pic)
-      example: "ty-us-storage30-pic"
-      required: false
-  response:
-    url:
-      description: Full image URL
-      type: string
+discover_devices:
+  name: Discover Devices
+  description: Scan the network for Tuya devices (UDP broadcast + TCP scan)
 
-reload:
-  name: Reload
-  description: Reload the LSC Tuya Doorbell integration with latest code
+discover_datapoints:
+  name: Discover Datapoints
+  description: Scan a device for all available datapoints
+  fields:
+    device_id:
+      name: Device ID
+      description: The device to scan
+      required: true
+      selector:
+        text:
+
+export_dp_profile:
+  name: Export DP Profile
+  description: Export the DP profile of a device as JSON
+  fields:
+    device_id:
+      name: Device ID
+      description: The device to export
+      required: true
+      selector:
+        text:

@@ -1,5 +1,5 @@
 {
-    "name": "Local LSC Tuya Doorbell integration",
+    "name": "Local LSC Tuya Doorbell integration V2.0.0",
     "content_in_root": false,
     "render_readme": true,
     "domains": ["binary_sensor", "sensor", "event"],

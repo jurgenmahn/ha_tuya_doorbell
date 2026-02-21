@@ -1,280 +1,128 @@
-"""Binary sensor entities for LSC Tuya Doorbell."""
-from typing import Any, Dict
+"""Binary sensor platform for LSC Tuya Doorbell."""
+
+from __future__ import annotations
+
+import asyncio
 import logging
+from typing import Any
 
 from homeassistant.components.binary_sensor import (
+    BinarySensorDeviceClass,
     BinarySensorEntity,
-    BinarySensorDeviceClass
 )
-from homeassistant.helpers.entity import DeviceInfo, EntityCategory
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.event import async_call_later
 
 from .const import (
+    DEFAULT_EVENT_RESET_TIMEOUT,
     DOMAIN,
-    CONF_DEVICE_ID,
-    CONF_FIRMWARE_VERSION,
-    CONF_NAME,
-    EVENT_BUTTON_PRESS,
-    EVENT_MOTION_DETECT,
-    ATTR_DEVICE_ID,
-    ATTR_TIMESTAMP,
+    DP_DOORBELL_BUTTON,
+    DP_MOTION_DETECTION,
+    ENTITY_BINARY_SENSOR,
 )
-from .entity import TuyaDoorbellEntity
-from .dp_entities import DPDefinition, DPType, DPCategory, get_dp_definitions
+from .dp_registry import DPDefinition
+from .entity import LscTuyaEntity
+from .hub import DeviceHub
 
 _LOGGER = logging.getLogger(__name__)
 
+
 async def async_setup_entry(
-    hass: HomeAssistant, 
-    config_entry: ConfigEntry, 
-    async_add_entities: AddEntitiesCallback
+    hass: HomeAssistant,
+    config_entry: ConfigEntry,
+    async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up binary sensors based on a config entry."""
-    hub = hass.data[DOMAIN][config_entry.entry_id]
-    device_id = config_entry.data[CONF_DEVICE_ID]
-    firmware_version = config_entry.data.get(CONF_FIRMWARE_VERSION, "Version 4")
-    
+    """Set up binary sensors from a config entry."""
+    hub: DeviceHub = hass.data[DOMAIN][config_entry.entry_id]
     entities = []
-    
-    # Get DP definitions based on firmware version
-    dp_definitions = get_dp_definitions(firmware_version)
-    
-    # Add event-based sensor entities
-    entities.extend([
-        DoorbellMotionSensor(hub, device_id),
-        DoorbellButtonSensor(hub, device_id),
-    ])
-    
-    # Add DP-based binary sensors (type=BOOLEAN, status_only category)
-    for dp_id, dp_def in dp_definitions.items():
-        if dp_def.dp_type == DPType.BOOLEAN and dp_def.category == DPCategory.STATUS_ONLY:
-            entity = TuyaDoorbellBinarySensor(hub, device_id, dp_def)
-            _LOGGER.info(f"Creating binary sensor entity: {dp_def.name} (DP {dp_id})")
-            entities.append(entity)
-    
-    if entities:
-        async_add_entities(entities)
 
-class TuyaDoorbellBinarySensor(TuyaDoorbellEntity, BinarySensorEntity):
-    """Representation of a Tuya doorbell binary sensor."""
-    
-    def __init__(self, hub, device_id, dp_definition):
-        """Initialize the binary sensor."""
-        super().__init__(hub, device_id, dp_definition)
-        
-        # Set device class based on DP code
-        if "motion" in dp_definition.code:
-            self._attr_device_class = BinarySensorDeviceClass.MOTION
-        elif "door" in dp_definition.code or "bell" in dp_definition.code:
+    if hub.profile:
+        for dp_id, dp_def in hub.profile.discovered_dps.items():
+            if dp_def.entity_type == ENTITY_BINARY_SENSOR:
+                entities.append(LscTuyaBinarySensor(hub, dp_def))
+    else:
+        # Fallback: always create doorbell and motion sensors
+        from .dp_registry import DPRegistry
+        registry = DPRegistry()
+        for dp_id in [DP_DOORBELL_BUTTON, DP_MOTION_DETECTION]:
+            dp_def = registry.get_known_dp(dp_id)
+            if dp_def:
+                entities.append(LscTuyaBinarySensor(hub, dp_def))
+
+    async_add_entities(entities)
+
+
+class LscTuyaBinarySensor(LscTuyaEntity, BinarySensorEntity):
+    """Binary sensor for doorbell press and motion detection events."""
+
+    def __init__(self, hub: DeviceHub, dp_definition: DPDefinition) -> None:
+        super().__init__(hub, dp_definition)
+        self._is_on = False
+        self._reset_handle: Any = None
+        self._event_counter = 0
+        self._last_image_url: str | None = None
+
+        # Set device class based on DP
+        if dp_definition.dp_id == DP_DOORBELL_BUTTON:
             self._attr_device_class = BinarySensorDeviceClass.OCCUPANCY
-            
-        # Set appropriate icon based on state and type
-        if self._state is True:
-            self._attr_icon = self._get_icon_for_state(True)
-        elif self._state is False:
-            self._attr_icon = self._get_icon_for_state(False)
-        
-    def _get_icon_for_state(self, state):
-        """Get the appropriate icon based on state and sensor type."""
-        if "motion" in self._dp_definition.code:
-            return "mdi:motion-sensor" if state else "mdi:motion-sensor-off"
-        elif "door" in self._dp_definition.code or "bell" in self._dp_definition.code:
-            return "mdi:bell-ring" if state else "mdi:bell"
+            self._attr_icon = "mdi:doorbell-video"
+        elif dp_definition.dp_id == DP_MOTION_DETECTION:
+            self._attr_device_class = BinarySensorDeviceClass.MOTION
         else:
-            return "mdi:check-circle" if state else "mdi:circle-outline"
-            
-    def handle_update(self, value):
-        """Handle state updates from the device."""
-        super().handle_update(value)
-        # Update icon based on new state
-        if value is True or value is False:
-            self._attr_icon = self._get_icon_for_state(value)
-        
+            self._attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
+
     @property
     def is_on(self) -> bool:
-        """Return true if the binary sensor is on."""
-        if self._state == "unknown" or self._state is None:
-            return None
-        return self._state is True
-        
-class DoorbellMotionSensor(BinarySensorEntity):
-    """Representation of a Motion Detection Sensor."""
-    
-    def __init__(self, hub, device_id):
-        """Initialize the sensor."""
-        self._hub = hub
-        self._device_id = device_id
-        
-        # Get device name from config entry
-        device_name = self._hub.entry.data.get(CONF_NAME, f"LSC Doorbell {device_id[-4:]}")
-        
-        # Set entity name to include device name and entity type with space for proper formatting
-        self._attr_name = f"{device_name} Motion Detection [Binary Sensor]"
-        
-        # Unique ID should ensure consistent entity_id generation
-        self._attr_unique_id = f"{device_id}_motion_detection"
-        
-        # Explicitly set entity_id to avoid Home Assistant's automatic name-based generation
-        self.entity_id = f"binary_sensor.{device_name.lower().replace(' ', '_')}_motion_detection"
-        self._attr_device_class = BinarySensorDeviceClass.MOTION
-        self._state = False
-        self._last_trigger = None
-        self._attr_entity_registry_enabled_default = True
-        
-        # Set up device info
-        # Using imports from module level
-        
-        # Set the entity category to DIAGNOSTIC to properly organize in the UI
-        self._attr_entity_category = EntityCategory.DIAGNOSTIC
-        
-        # Link to the device
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, self._device_id)},
-            name=self._hub.entry.data.get(CONF_NAME, f"LSC Doorbell {self._device_id[-4:]}"),
-            manufacturer="LSC Smart Connect / Tuya",
-            model=f"Video Doorbell {self._hub.entry.data.get(CONF_FIRMWARE_VERSION, 'Unknown')}",
-        )
-        
+        """Return True if the binary sensor is on."""
+        return self._is_on
+
     @property
-    def available(self) -> bool:
-        """Return True if entity is available."""
-        return self._hub._protocol is not None
-    
-    @property
-    def is_on(self) -> bool:
-        """Return true if the binary sensor is on."""
-        if self._state == "unknown":
-            return None
-        return self._state
-        
-    @property
-    def extra_state_attributes(self) -> Dict[str, Any]:
-        """Return device specific state attributes."""
-        return {
-            "last_triggered": self._last_trigger,
-            "device_id": self._device_id
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return extra state attributes."""
+        attrs = {
+            "event_counter": self._event_counter,
+            "dp_id": self._dp_id,
         }
-        
-    async def async_added_to_hass(self):
-        """When entity is added to hass."""
-        # Get device name for device-specific events - ensure consistent naming with what we used in __init__
-        device_name = self._hub.entry.data.get(CONF_NAME, f"LSC Doorbell {self._device_id[-4:]}").lower().replace(" ", "_")
-        device_motion_event = f"{EVENT_MOTION_DETECT}_{device_name}"
-        
-        @callback
-        def motion_handler(event):
-            """Handle motion event."""
-            # No need to check device ID since we're using device-specific events
-            self._state = True
-            self._last_trigger = event.data.get(ATTR_TIMESTAMP)
-            # Use hass.add_job for thread safety
-            if self.hass:
-                self.hass.add_job(self.async_write_ha_state)
-            
-            # Reset after 10 seconds
-            if self.hass and self.hass.loop:
-                self.hass.loop.call_later(10, lambda: self._reset_state())
+        if self._last_image_url:
+            attrs["last_image_url"] = self._last_image_url
+        return attrs
 
-        # Register the event listener for device-specific event
-        self.async_on_remove(
-            self.hass.bus.async_listen(device_motion_event, motion_handler)
-        )
-        
-    def _reset_state(self):
-        """Reset the state to off."""
-        self._state = False
-        # Use hass.add_job for thread safety
-        if self.hass:
-            self.hass.add_job(self.async_write_ha_state)
+    def _handle_dp_update(self, value: Any) -> None:
+        """Handle event DP update — turn on and schedule auto-reset."""
+        self._is_on = True
+        self._event_counter += 1
 
-class DoorbellButtonSensor(BinarySensorEntity):
-    """Representation of a Doorbell Button Sensor."""
-    
-    def __init__(self, hub, device_id):
-        """Initialize the sensor."""
-        self._hub = hub
-        self._device_id = device_id
-        
-        # Get device name from config entry
-        device_name = self._hub.entry.data.get(CONF_NAME, f"LSC Doorbell {device_id[-4:]}")
-        
-        # Set entity name to include device name and entity type with space for proper formatting
-        self._attr_name = f"{device_name} Doorbell Button [Binary Sensor]"
-        
-        # Unique ID should ensure consistent entity_id generation
-        self._attr_unique_id = f"{device_id}_doorbell_button"
-        
-        # Explicitly set entity_id to avoid Home Assistant's automatic name-based generation
-        self.entity_id = f"binary_sensor.{device_name.lower().replace(' ', '_')}_doorbell_button"
-        self._attr_device_class = BinarySensorDeviceClass.OCCUPANCY
-        self._state = False
-        self._last_trigger = None
-        self._attr_entity_registry_enabled_default = True
-        
-        # Set up device info
-        # Using imports from module level
-        
-        # Set the entity category to DIAGNOSTIC to properly organize in the UI
-        self._attr_entity_category = EntityCategory.DIAGNOSTIC
-        
-        # Link to the device
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, self._device_id)},
-            name=self._hub.entry.data.get(CONF_NAME, f"LSC Doorbell {self._device_id[-4:]}"),
-            manufacturer="LSC Smart Connect / Tuya",
-            model=f"Video Doorbell {self._hub.entry.data.get(CONF_FIRMWARE_VERSION, 'Unknown')}",
-        )
-        
-    @property
-    def available(self) -> bool:
-        """Return True if entity is available."""
-        return self._hub._protocol is not None
-    
-    @property
-    def is_on(self) -> bool:
-        """Return true if the binary sensor is on."""
-        if self._state == "unknown":
-            return None
-        return self._state
-        
-    @property
-    def extra_state_attributes(self) -> Dict[str, Any]:
-        """Return device specific state attributes."""
-        return {
-            "last_triggered": self._last_trigger,
-            "device_id": self._device_id
-        }
-        
-    async def async_added_to_hass(self):
-        """When entity is added to hass."""
-        # Get device name for device-specific events - ensure consistent naming with what we used in __init__
-        device_name = self._hub.entry.data.get(CONF_NAME, f"LSC Doorbell {self._device_id[-4:]}").lower().replace(" ", "_")
-        device_button_event = f"{EVENT_BUTTON_PRESS}_{device_name}"
-        
-        @callback
-        def button_handler(event):
-            """Handle button press event."""
-            # No need to check device ID since we're using device-specific events
-            self._state = True
-            self._last_trigger = event.data.get(ATTR_TIMESTAMP)
-            # Use hass.add_job for thread safety
-            if self.hass:
-                self.hass.add_job(self.async_write_ha_state)
-            
-            # Reset after 10 seconds
-            if self.hass and self.hass.loop:
-                self.hass.loop.call_later(10, lambda: self._reset_state())
+        # Extract image URL if available
+        image_url = self._hub._extract_image_url(value)
+        if image_url:
+            self._last_image_url = image_url
 
-        # Register the event listener for device-specific event
-        self.async_on_remove(
-            self.hass.bus.async_listen(device_button_event, button_handler)
+        # Cancel existing reset timer
+        if self._reset_handle:
+            self._reset_handle()
+            self._reset_handle = None
+
+        # Schedule auto-reset
+        self._reset_handle = async_call_later(
+            self._hub._hass,
+            DEFAULT_EVENT_RESET_TIMEOUT,
+            self._auto_reset,
         )
-        
-    def _reset_state(self):
-        """Reset the state to off."""
-        self._state = False
-        # Use hass.add_job for thread safety
-        if self.hass:
-            self.hass.add_job(self.async_write_ha_state)
+
+        self.async_write_ha_state()
+
+    def _auto_reset(self, _now: Any = None) -> None:
+        """Reset binary sensor to off after timeout."""
+        self._is_on = False
+        self._reset_handle = None
+        self.async_write_ha_state()
+
+    def _restore_state(self, last_state: Any) -> None:
+        """Restore state — binary sensors always start as off."""
+        self._is_on = False
+        if last_state.attributes:
+            self._event_counter = last_state.attributes.get("event_counter", 0)
+            self._last_image_url = last_state.attributes.get("last_image_url")

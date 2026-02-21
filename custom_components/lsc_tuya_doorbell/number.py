@@ -1,120 +1,74 @@
-"""Number entities for LSC Tuya Doorbell."""
-from typing import Any, Optional
-import logging
+"""Number platform for LSC Tuya Doorbell."""
 
-from homeassistant.components.number import NumberEntity, NumberMode
+from __future__ import annotations
+
+import logging
+from typing import Any
+
+from homeassistant.components.number import NumberEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import DOMAIN, CONF_DEVICE_ID, CONF_FIRMWARE_VERSION
-from .entity import TuyaDoorbellEntity
-from .dp_entities import DPType, DPCategory, get_dp_definitions
+from .const import DOMAIN, ENTITY_NUMBER
+from .dp_registry import DPDefinition
+from .entity import LscTuyaEntity
+from .hub import DeviceHub
 
 _LOGGER = logging.getLogger(__name__)
 
 
 async def async_setup_entry(
-    hass: HomeAssistant, 
-    config_entry: ConfigEntry, 
-    async_add_entities: AddEntitiesCallback
+    hass: HomeAssistant,
+    config_entry: ConfigEntry,
+    async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up number entities based on a config entry."""
-    hub = hass.data[DOMAIN][config_entry.entry_id]
-    device_id = config_entry.data[CONF_DEVICE_ID]
-    firmware_version = config_entry.data.get(CONF_FIRMWARE_VERSION, "Version 4")
-    
-    # Get DP definitions based on firmware version
-    dp_definitions = get_dp_definitions(firmware_version)
-    
+    """Set up numbers from a config entry."""
+    hub: DeviceHub = hass.data[DOMAIN][config_entry.entry_id]
     entities = []
-    
-    # Add DP-based number entities (integer type and status & function category)
-    for dp_id, dp_def in dp_definitions.items():
-        if dp_def.dp_type == DPType.INTEGER and dp_def.category == DPCategory.STATUS_FUNCTION:
-            entity = TuyaDoorbellNumber(hub, device_id, dp_def)
-            _LOGGER.info(f"Creating number entity: {dp_def.name} (DP {dp_id}) with range: {dp_def.min_value}-{dp_def.max_value}")
-            entities.append(entity)
-    
-    if entities:
-        async_add_entities(entities)
+
+    if hub.profile:
+        for dp_id, dp_def in hub.profile.discovered_dps.items():
+            if dp_def.entity_type == ENTITY_NUMBER:
+                entities.append(LscTuyaNumber(hub, dp_def))
+
+    async_add_entities(entities)
 
 
-class TuyaDoorbellNumber(TuyaDoorbellEntity, NumberEntity):
-    """Representation of a Tuya doorbell number entity."""
-    
-    def __init__(self, hub, device_id, dp_definition):
-        """Initialize the number entity."""
-        super().__init__(hub, device_id, dp_definition)
-        
-        # Set up number characteristics
-        self._attr_native_min_value = dp_definition.min_value if dp_definition.min_value is not None else 0
-        self._attr_native_max_value = dp_definition.max_value if dp_definition.max_value is not None else 100
-        self._attr_native_step = dp_definition.step if dp_definition.step is not None else 1
-        self._attr_mode = NumberMode.SLIDER
-        
-        # For volume controls, only use percentage if no unit is specified
-        if "volume" in dp_definition.code:
-            if dp_definition.unit is not None:
-                self._attr_native_unit_of_measurement = dp_definition.unit
-            else:
-                self._attr_native_unit_of_measurement = "%"
-            
-        # Set initial value if available and can be converted to float
-        if self._state is not None and isinstance(self._state, (int, float, bool)) and self._state != "unknown":
-            try:
-                self._attr_native_value = float(self._state)
-            except (ValueError, TypeError):
-                # If conversion fails, don't set an initial value
-                pass
-        
+class LscTuyaNumber(LscTuyaEntity, NumberEntity):
+    """Number entity for numeric Tuya datapoints."""
+
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, hub: DeviceHub, dp_definition: DPDefinition) -> None:
+        super().__init__(hub, dp_definition)
+        self._attr_native_min_value = float(dp_definition.min_value or 0)
+        self._attr_native_max_value = float(dp_definition.max_value or 100)
+        self._attr_native_step = 1.0
+
     @property
-    def native_value(self) -> Optional[float]:
+    def native_value(self) -> float | None:
         """Return the current value."""
-        if self._state is None or not isinstance(self._state, (int, float, bool)) or self._state == "unknown":
+        if self._state_value is None:
             return None
         try:
-            return float(self._state)
+            return float(self._state_value)
         except (ValueError, TypeError):
-            # If conversion fails, return None instead of raising an error
             return None
-        
-    async def async_added_to_hass(self):
-        """When entity is added to hass."""
-        await super().async_added_to_hass()
-        
-        # Schedule a refresh of this entity's state after a brief delay
-        # This helps ensure we have the latest state from the device
-        async def delayed_refresh():
-            import asyncio
-            await asyncio.sleep(1)  # Small delay to avoid overwhelming the device
-            await self.async_refresh_state()
-            
-        self.hass.async_create_task(delayed_refresh())
-            
+
     async def async_set_native_value(self, value: float) -> None:
-        """Set the value."""
-        # Store the time of this manual update to prevent automatic overrides
-        from datetime import datetime
-        self._last_manual_update = datetime.now().timestamp()
-        
-        # Update state immediately for better UI responsiveness
-        self._state = int(value)
-        self._attr_native_value = float(value)
+        """Set a new value."""
+        int_value = int(value)
+        self._set_manual_update()
+        self._state_value = int_value
         self.async_write_ha_state()
-        
-        # Send command to the device
-        _LOGGER.info(f"Setting value for {self.entity_id} to {int(value)}")
-        success = await self._hub.set_dp(self._dp_definition.id, int(value))
-            
-        if success:
-            _LOGGER.debug(f"Value for {self.entity_id} set successfully")
-            # Schedule a refresh after a brief delay to verify
-            async def delayed_refresh():
-                import asyncio
-                await asyncio.sleep(2)  # Wait 2 seconds before refreshing
-                await self.async_refresh_state()
-                
-            self.hass.async_create_task(delayed_refresh())
-        else:
-            _LOGGER.warning(f"Failed to set value for {self.entity_id}")
+        await self._hub.set_dp(self._dp_id, int_value)
+
+    def _restore_state(self, last_state: Any) -> None:
+        """Restore previous number state."""
+        if last_state.state not in (None, "unknown", "unavailable"):
+            try:
+                self._state_value = int(float(last_state.state))
+            except (ValueError, TypeError):
+                pass

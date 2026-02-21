@@ -1,72 +1,60 @@
 {
-  "title": "LSC Tuya Doorbell",
   "config": {
     "step": {
       "user": {
-        "title": "Add LSC Tuya Doorbell",
+        "title": "LSC Tuya Doorbell Setup",
+        "description": "Choose how to add your doorbell.",
         "data": {
-          "name": "Device Name (used for all entity names)",
-          "device_id": "Device ID",
-          "local_key": "Local Key",
-          "host": "IP Address or Subnet (e.g. 192.168.1.0/24)",
-          "port": "Port",
-          "protocol_version": "Protocol Version",
-          "firmware_version": "Device Firmware Version (check in Tuya app)",
-          "button_dp": "Doorbell Button Event",
-          "motion_dp": "Motion Detection Event",
-          "show_advanced": "Show Advanced Options",
-          "dps_map": "Custom DPS Mapping (JSON)"
-        },
-        "description": "Enter your Tuya doorbell information. For the IP Address, you can enter a specific IP or a subnet (e.g. 192.168.1.0/24) to automatically scan for devices."
+          "method": "Setup method"
+        }
       },
-      "discover": {
-        "title": "Select Device",
+      "discovery": {
+        "title": "Device Discovery",
+        "description": "Found {count} device(s) on your network. Select your doorbell.",
         "data": {
-          "device_ip": "Select a device",
-          "action": "Action"
-        },
-        "description": "Found {device_count} Tuya devices in subnet {subnet}. Select a device to add or choose an action below."
+          "device": "Select device"
+        }
+      },
+      "manual": {
+        "title": "Manual Configuration",
+        "description": "Enter the device connection details.",
+        "data": {
+          "host": "IP Address",
+          "device_id": "Device ID",
+          "port": "Port",
+          "protocol_version": "Protocol Version"
+        }
+      },
+      "credentials": {
+        "title": "Device Credentials",
+        "description": "Device: {device_id} at {host} (protocol {version})\n\nEnter the local key for this device.",
+        "data": {
+          "local_key": "Local Key (16 characters)",
+          "device_name": "Device Name"
+        }
       }
     },
     "error": {
-      "cannot_connect": "Failed to connect to the device",
-      "invalid_auth": "Invalid device ID or local key",
-      "host_required": "IP address or subnet is required",
-      "invalid_subnet": "Invalid subnet format. Use CIDR notation (e.g. 192.168.1.0/24)",
-      "subnet_too_large": "Subnet must be /24 or smaller for efficient scanning",
-      "no_devices_found": "No devices found with the specified port open in this subnet",
-      "invalid_dps_map": "Invalid DPS map format. Must be valid JSON.",
-      "invalid_dp_for_firmware": "The selected datapoint is not valid for this firmware version.",
-      "unknown": "Unexpected error"
+      "cannot_connect": "Could not connect to the device. Check the IP address and port.",
+      "heartbeat_failed": "Connected but device did not respond to heartbeat. Check the local key.",
+      "invalid_local_key": "Local key must be exactly 16 characters.",
+      "unknown": "An unexpected error occurred."
     },
     "abort": {
-      "already_configured": "Device already configured"
+      "already_configured": "This device is already configured."
     }
   },
   "options": {
     "step": {
       "init": {
-        "title": "Update LSC Tuya Doorbell Configuration",
+        "title": "LSC Tuya Doorbell Options",
+        "description": "Modify connection settings for your doorbell.",
         "data": {
-          "local_key": "Local Key",
           "host": "IP Address",
           "port": "Port",
-          "protocol_version": "Protocol Version",
-          "firmware_version": "Device Firmware Version (check in Tuya app)",
-          "button_dp": "Doorbell Button Event",
-          "motion_dp": "Motion Detection Event",
-          "show_advanced": "Show Advanced Options",
-          "dps_map": "Custom DPS Mapping (JSON)"
-        },
-        "description": "Update configuration for {name} (Device ID: {device_id}). Changes will take effect immediately and the device will reconnect with the new settings."
+          "protocol_version": "Protocol Version"
+        }
       }
-    },
-    "error": {
-      "cannot_connect": "Failed to connect to the device",
-      "invalid_auth": "Invalid local key",
-      "invalid_dps_map": "Invalid DPS map format. Must be valid JSON.",
-      "invalid_dp_for_firmware": "The selected datapoint is not valid for this firmware version.",
-      "unknown": "Unexpected error"
     }
   }
 }
