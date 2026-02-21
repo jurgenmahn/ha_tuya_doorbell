@@ -261,7 +261,16 @@ The protocol implementation is independent of Home Assistant and can be used sta
 
 ## Credits
 
-Built by [Jurgen Mahn](https://github.com/jurgenmahn) with [Claude Code](https://claude.ai/code).
+🚀 Built with human ingenuity & a dash of AI wizardry
+This project emerged from late-night coding sessions, unexpected inspiration, and the occasional debugging dance. Every line of code has a story behind it.
+
+Found a bug? Have a wild idea? The issues tab is your canvas.
+
+Authored By: 👨‍💻 Jurgen Mahn with some help from AI code monkies Claude & Manus.im
+
+"Sometimes the code writes itself. Other times, we collaborate with the machines."
+
+⚡ Happy hacking, fellow explorer ⚡
 
 ## License
 
