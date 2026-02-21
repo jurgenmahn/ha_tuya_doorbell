@@ -542,35 +542,34 @@ class LscTuyaDoorbellOptionsFlow(OptionsFlow):
         """Start DP scan — show progress spinner while scanning in background."""
         hub = self._get_hub()
 
-        if not hub or not hub.available:
-            return self.async_show_form(
-                step_id="dp_scan",
-                data_schema=vol.Schema({}),
-                errors={"base": "device_unavailable"},
-                description_placeholders={"count": "0"},
-            )
-
-        # Launch background scan task
+        # Only check availability before starting the task
         if not hasattr(self, "_scan_task") or self._scan_task is None:
+            if not hub or not hub.available:
+                return self.async_show_form(
+                    step_id="dp_scan_failed",
+                    data_schema=vol.Schema({}),
+                    errors={"base": "device_unavailable"},
+                    description_placeholders={"count": "0"},
+                )
             self._scan_task = self.hass.async_create_task(
                 self._run_dp_scan(hub)
             )
 
+        # Task still running — show spinner
         if not self._scan_task.done():
             return self.async_show_progress(
                 step_id="dp_scan",
                 progress_action="dp_scan",
+                progress_task=self._scan_task,
             )
 
-        # Task finished — check result
-        try:
-            self._scan_task.result()
-        except Exception:
-            _LOGGER.exception("DP scan failed unexpectedly")
-            self._scan_task = None
+        # Task finished — always use progress_done to transition out
+        scan_error = getattr(self, "_scan_error", None)
+        self._scan_task = None
+
+        if scan_error:
             return self.async_show_progress_done(next_step_id="dp_scan_failed")
 
-        self._scan_task = None
         return self.async_show_progress_done(next_step_id="dp_scan_results")
 
     async def _run_dp_scan(self, hub) -> None:

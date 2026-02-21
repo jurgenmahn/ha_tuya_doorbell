@@ -47,6 +47,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     _LOGGER.debug("Forwarding platform setup: %s", PLATFORMS)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
+    # Reload integration when options change
+    entry.async_on_unload(entry.add_update_listener(_async_update_listener))
+
     # Register services (only once)
     if not hass.services.has_service(DOMAIN, "discover_devices"):
         _LOGGER.debug("Registering integration services")
@@ -54,6 +57,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     _LOGGER.debug("Config entry %s setup complete", entry.entry_id)
     return True
+
+
+async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Reload integration when options are updated."""
+    _LOGGER.debug("Options changed for %s, reloading", entry.entry_id)
+    await hass.config_entries.async_reload(entry.entry_id)
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
