@@ -168,6 +168,22 @@ class DPDiscoveryEngine:
         finally:
             unregister()
 
+        # Add well-known event DPs that can't be discovered by querying
+        # (they only fire on physical events like button press / motion)
+        for dp_id, dp_def in KNOWN_DPS.items():
+            if dp_def.get("is_event") and dp_id not in found:
+                found[dp_id] = DiscoveredDP(
+                    dp_id=dp_id,
+                    value=None,
+                    dp_type=dp_def["dp_type"],
+                    name=dp_def["name"],
+                    is_known=True,
+                )
+                _LOGGER.info(
+                    "DP scan: added known event DP %d (%s) — not discoverable by query",
+                    dp_id, dp_def["name"],
+                )
+
         result_list = sorted(found.values(), key=lambda dp: dp.dp_id)
         _LOGGER.info(
             "DP scan %s: found %d datapoints (last_batch_end=%d)",
