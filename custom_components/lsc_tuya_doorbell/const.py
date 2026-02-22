@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 DOMAIN = "lsc_tuya_doorbell"
-VERSION = "2.6.0"
+VERSION = "2.6.2"
 
 # Connection defaults
 DEFAULT_PORT = 6668
