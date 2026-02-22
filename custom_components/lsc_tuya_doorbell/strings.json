@@ -100,9 +100,16 @@
           "snapshot_path": "Snapshot Save Directory"
         }
       },
+      "dp_scan_mode": {
+        "title": "Scan for Datapoints",
+        "description": "Configure scan options before starting.",
+        "data": {
+          "clear_existing": "Clear existing datapoints (replace all with scan results)"
+        }
+      },
       "dp_scan": {
         "title": "Scanning for Datapoints",
-        "description": "Scanning all datapoints (1-255) on the device. This may take a moment...",
+        "description": "{status}\n\nFound {found_count} datapoint(s): {found_dps}",
         "progress_action": {
           "dp_scan": "Scanning datapoints on the device..."
         }
@@ -124,7 +131,8 @@
       "dp_id_out_of_range": "DP ID must be between 1 and 255.",
       "device_unavailable": "Device is not connected. Check the connection first.",
       "cannot_connect": "Could not connect to the device.",
-      "scan_failed": "Datapoint scan failed. Check the logs for details."
+      "scan_failed": "Datapoint scan failed. Check the logs for details.",
+      "scan_timeout": "Datapoint scan timed out after 60 seconds. The device may be slow or unresponsive."
     }
   }
 }

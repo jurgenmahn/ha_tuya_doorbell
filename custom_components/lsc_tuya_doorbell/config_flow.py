@@ -301,6 +301,15 @@ class LscTuyaDoorbellOptionsFlow(OptionsFlow):
     def __init__(self, config_entry: ConfigEntry) -> None:
         self._config_entry = config_entry
         self._editing_dp_id: int | None = None
+        self._scan_task: asyncio.Task | None = None
+        self._scan_results: list | None = None
+        self._scan_error: str | None = None
+        self._scan_progress: dict[str, str] = {
+            "status": "Starting scan...",
+            "found_count": "0",
+            "found_dps": "none yet",
+        }
+        self._scan_clear_existing: bool = False
 
     def _get_hub(self):
         """Get the DeviceHub for this config entry."""
@@ -319,7 +328,7 @@ class LscTuyaDoorbellOptionsFlow(OptionsFlow):
             if menu == MENU_DATAPOINTS:
                 return await self.async_step_dp_list()
             if menu == MENU_SCAN:
-                return await self.async_step_dp_scan()
+                return await self.async_step_dp_scan_mode()
 
         return self.async_show_form(
             step_id="init",
@@ -536,6 +545,21 @@ class LscTuyaDoorbellOptionsFlow(OptionsFlow):
             errors=errors,
         )
 
+    async def async_step_dp_scan_mode(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Choose scan mode before starting the scan."""
+        if user_input is not None:
+            self._scan_clear_existing = user_input.get("clear_existing", False)
+            return await self.async_step_dp_scan()
+
+        return self.async_show_form(
+            step_id="dp_scan_mode",
+            data_schema=vol.Schema({
+                vol.Optional("clear_existing", default=False): bool,
+            }),
+        )
+
     async def async_step_dp_scan(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
@@ -543,7 +567,7 @@ class LscTuyaDoorbellOptionsFlow(OptionsFlow):
         hub = self._get_hub()
 
         # Only check availability before starting the task
-        if not hasattr(self, "_scan_task") or self._scan_task is None:
+        if self._scan_task is None:
             if not hub or not hub.available:
                 return self.async_show_form(
                     step_id="dp_scan_failed",
@@ -551,6 +575,11 @@ class LscTuyaDoorbellOptionsFlow(OptionsFlow):
                     errors={"base": "device_unavailable"},
                     description_placeholders={"count": "0"},
                 )
+            self._scan_progress = {
+                "status": "Starting scan...",
+                "found_count": "0",
+                "found_dps": "none yet",
+            }
             self._scan_task = self.hass.async_create_task(
                 self._run_dp_scan(hub)
             )
@@ -561,10 +590,11 @@ class LscTuyaDoorbellOptionsFlow(OptionsFlow):
                 step_id="dp_scan",
                 progress_action="dp_scan",
                 progress_task=self._scan_task,
+                description_placeholders=self._scan_progress,
             )
 
         # Task finished — always use progress_done to transition out
-        scan_error = getattr(self, "_scan_error", None)
+        scan_error = self._scan_error
         self._scan_task = None
 
         if scan_error:
@@ -572,11 +602,33 @@ class LscTuyaDoorbellOptionsFlow(OptionsFlow):
 
         return self.async_show_progress_done(next_step_id="dp_scan_results")
 
+    def _update_scan_progress(
+        self,
+        current: int,
+        total: int,
+        batch_start: int,
+        batch_end: int,
+        found_dp_ids: list[int],
+    ) -> None:
+        """Callback from DPDiscoveryEngine to update progress placeholders."""
+        self._scan_progress = {
+            "status": f"Scanning DPs {batch_start}-{batch_end} ({current}/{total})",
+            "found_count": str(len(found_dp_ids)),
+            "found_dps": ", ".join(str(d) for d in found_dp_ids) if found_dp_ids else "none yet",
+        }
+
     async def _run_dp_scan(self, hub) -> None:
         """Background task: run the actual DP discovery."""
         try:
-            self._scan_results = await hub.discover_dps()
+            self._scan_results = await hub.discover_dps(
+                progress_callback=self._update_scan_progress,
+                clear_existing=self._scan_clear_existing,
+            )
             self._scan_error = None
+        except asyncio.TimeoutError:
+            _LOGGER.warning("DP scan timed out")
+            self._scan_results = []
+            self._scan_error = "scan_timeout"
         except ConnectionError:
             self._scan_results = []
             self._scan_error = "cannot_connect"

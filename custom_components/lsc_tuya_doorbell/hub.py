@@ -35,6 +35,7 @@ from .const import (
     DOMAIN,
     DP_DOORBELL_BUTTON,
     DP_MOTION_DETECTION,
+    DP_SCAN_TIMEOUT,
     EVENT_BUTTON_PRESS,
     EVENT_CONNECTED,
     EVENT_DISCONNECTED,
@@ -279,21 +280,50 @@ class DeviceHub:
         else:
             _LOGGER.debug("SetDP: no confirmation data from device")
 
-    async def discover_dps(self) -> list[DiscoveredDP]:
-        """Run a full DP discovery scan."""
+    async def discover_dps(
+        self,
+        progress_callback: Callable[[int, int, int, int, list[int]], None] | None = None,
+        clear_existing: bool = False,
+    ) -> list[DiscoveredDP]:
+        """Run a full DP discovery scan.
+
+        Args:
+            progress_callback: Optional callback (current, total, batch_start, batch_end, found_dp_ids).
+            clear_existing: If True, replace all profile DPs with scan results.
+                If False (default), merge scan results into existing profile.
+        """
         if not self._connection.is_connected:
             raise ConnectionError("Not connected")
 
         engine = DPDiscoveryEngine(self._connection)
-        discovered = await engine.scan_all()
+        if progress_callback:
+            engine.set_progress_callback(progress_callback)
+
+        discovered = await asyncio.wait_for(
+            engine.scan_all(), timeout=DP_SCAN_TIMEOUT
+        )
 
         # Update profile
         dp_defs = self._dp_registry.merge_discovered(discovered)
-        self._profile = DeviceProfile(
-            device_id=self._device_id,
-            discovered_dps=dp_defs,
-            protocol_version=self._version,
-        )
+
+        if clear_existing:
+            # Replace all — only keep scan results
+            self._profile = DeviceProfile(
+                device_id=self._device_id,
+                discovered_dps=dp_defs,
+                protocol_version=self._version,
+            )
+        else:
+            # Merge — preserve existing DPs not found in scan
+            existing = {}
+            if self._profile:
+                existing = dict(self._profile.discovered_dps)
+            existing.update(dp_defs)
+            self._profile = DeviceProfile(
+                device_id=self._device_id,
+                discovered_dps=existing,
+                protocol_version=self._version,
+            )
 
         # Save profile
         try:

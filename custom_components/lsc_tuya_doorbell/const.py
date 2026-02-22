@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 DOMAIN = "lsc_tuya_doorbell"
-VERSION = "2.5.0"
+VERSION = "2.5.1"
 
 # Connection defaults
 DEFAULT_PORT = 6668
@@ -23,6 +23,8 @@ DEFAULT_EVENT_RESET_TIMEOUT = 5  # seconds
 DP_SCAN_START = 1
 DP_SCAN_END = 255
 DP_SCAN_BATCH_SIZE = 15
+DP_SCAN_CONCURRENCY = 10  # max concurrent batch requests
+DP_SCAN_TIMEOUT = 60  # seconds — overall timeout for scan_all()
 
 # Discovery
 DISCOVERY_UDP_PORTS = [6666, 6667]
