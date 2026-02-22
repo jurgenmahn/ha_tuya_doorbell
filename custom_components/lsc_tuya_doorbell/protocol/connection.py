@@ -263,6 +263,12 @@ class TuyaConnection:
                             status_future, timeout=RESPONSE_TIMEOUT + attempt * 2,
                         )
                         return msg.data.get("dps", {})
+                    except asyncio.CancelledError:
+                        _LOGGER.debug(
+                            "STATUS future cancelled (device disconnected?) during query (attempt %d/3)",
+                            attempt + 1,
+                        )
+                        break
                     except asyncio.TimeoutError:
                         _LOGGER.debug(
                             "No STATUS response for device22 query (attempt %d/3)",
@@ -276,7 +282,7 @@ class TuyaConnection:
             else:
                 msg = await self.send_and_wait(cmd, payload)
                 return msg.data.get("dps", {})
-        except (TimeoutError, ConnectionError) as err:
+        except (TimeoutError, ConnectionError, asyncio.CancelledError) as err:
             _LOGGER.debug("DP query failed: %s", err)
             return {}
 
