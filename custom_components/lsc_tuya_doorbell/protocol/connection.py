@@ -221,7 +221,7 @@ class TuyaConnection:
             return False
 
     async def query_dps(
-        self, dp_ids: list[int] | None = None, max_retries: int = 3,
+        self, dp_ids: list[int] | None = None, max_retries: int = 1,
     ) -> dict:
         """Query datapoint values from the device.
 
@@ -323,7 +323,7 @@ class TuyaConnection:
             _LOGGER.debug("Set DPS failed: %s", err)
             return None
 
-    async def update_dps(self, dp_ids: list[int], max_retries: int = 3) -> dict:
+    async def update_dps(self, dp_ids: list[int], max_retries: int = 1) -> dict:
         """Request a DPS refresh for specific datapoints.
 
         For device22, we use CONTROL_NEW with dps:{id:null} since these
