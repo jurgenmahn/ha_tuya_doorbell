@@ -40,6 +40,15 @@ class DiscoveredDP:
     enum_values: list[str] | None = None
 
 
+@dataclass
+class ScanResult:
+    """Result of a DP scan, including progress info for resume."""
+
+    discovered: list[DiscoveredDP]
+    last_batch_end: int  # last DP ID that was scanned
+    completed: bool  # True if full range was covered
+
+
 class DPDiscoveryEngine:
     """Scans a Tuya device to discover all available datapoints."""
 
@@ -57,10 +66,16 @@ class DPDiscoveryEngine:
         self,
         range_start: int = DP_SCAN_START,
         range_end: int = DP_SCAN_END,
-    ) -> list[DiscoveredDP]:
-        """Scan DP range to discover all available datapoints."""
+    ) -> ScanResult:
+        """Scan DP range to discover all available datapoints.
+
+        Returns a ScanResult with progress info so the caller can resume
+        if the scan was interrupted by a disconnect.
+        """
         found: dict[int, DiscoveredDP] = {}
         total = range_end - range_start + 1
+        completed = True
+        last_batch_end = range_start - 1
 
         # Phase 1: Query all DPs to get current state
         _LOGGER.info("DP scan phase 1: querying current DP state")
@@ -118,6 +133,8 @@ class DPDiscoveryEngine:
                 except Exception as err:
                     _LOGGER.warning("DP scan batch %d/%d failed: %s", batch_num, num_batches, err)
 
+                last_batch_end = batch_end - 1
+
                 # Check collected push updates
                 for dp_str, value in list(collected.items()):
                     dp_id = int(dp_str)
@@ -145,14 +162,24 @@ class DPDiscoveryEngine:
                         "DP scan aborted after batch %d/%d: device disconnected (found %d DPs so far)",
                         batch_num, num_batches, len(found),
                     )
+                    completed = False
                     break
 
         finally:
             unregister()
 
         result_list = sorted(found.values(), key=lambda dp: dp.dp_id)
-        _LOGGER.info("DP scan complete: found %s datapoints", len(result_list))
-        return result_list
+        _LOGGER.info(
+            "DP scan %s: found %d datapoints (last_batch_end=%d)",
+            "complete" if completed else "interrupted",
+            len(result_list),
+            last_batch_end,
+        )
+        return ScanResult(
+            discovered=result_list,
+            last_batch_end=last_batch_end,
+            completed=completed,
+        )
 
     async def monitor_passive(self, duration: float = 30.0) -> list[DiscoveredDP]:
         """Listen for spontaneous DP updates for a duration."""

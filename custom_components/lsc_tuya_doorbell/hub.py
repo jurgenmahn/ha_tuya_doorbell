@@ -35,6 +35,9 @@ from .const import (
     DOMAIN,
     DP_DOORBELL_BUTTON,
     DP_MOTION_DETECTION,
+    DP_SCAN_MAX_RETRIES,
+    DP_SCAN_RECONNECT_WAIT,
+    DP_SCAN_START,
     DP_SCAN_TIMEOUT,
     EVENT_BUTTON_PRESS,
     EVENT_CONNECTED,
@@ -104,6 +107,16 @@ class DeviceHub:
         self._last_snapshot_path: str | None = None
         self._last_snapshot_url: str | None = None
 
+        # DP scan state (persists across options dialog open/close)
+        self._scan_task: asyncio.Task | None = None
+        self._scan_results: list[DiscoveredDP] | None = None
+        self._scan_error: str | None = None
+        self._scan_progress: dict[str, str] = {
+            "status": "Starting scan...",
+            "found_count": "0",
+            "found_dps": "none yet",
+        }
+
         # Tasks
         self._heartbeat_task: asyncio.Task | None = None
         self._reconnect_task: asyncio.Task | None = None
@@ -164,6 +177,39 @@ class DeviceHub:
     @property
     def last_snapshot_url(self) -> str | None:
         return self._last_snapshot_url
+
+    @property
+    def scan_task(self) -> asyncio.Task | None:
+        return self._scan_task
+
+    @property
+    def scan_results(self) -> list[DiscoveredDP] | None:
+        return self._scan_results
+
+    @property
+    def scan_error(self) -> str | None:
+        return self._scan_error
+
+    @property
+    def scan_progress(self) -> dict[str, str]:
+        return self._scan_progress
+
+    @property
+    def scan_running(self) -> bool:
+        return self._scan_task is not None and not self._scan_task.done()
+
+    def reset_scan_state(self) -> None:
+        """Reset scan state for a fresh scan."""
+        if self._scan_task and not self._scan_task.done():
+            self._scan_task.cancel()
+        self._scan_task = None
+        self._scan_results = None
+        self._scan_error = None
+        self._scan_progress = {
+            "status": "Starting scan...",
+            "found_count": "0",
+            "found_dps": "none yet",
+        }
 
     def get_dp_state(self, dp_id: int) -> Any:
         """Get the current state of a datapoint."""
@@ -256,6 +302,13 @@ class DeviceHub:
             except asyncio.CancelledError:
                 pass
 
+        if self._scan_task and not self._scan_task.done():
+            self._scan_task.cancel()
+            try:
+                await self._scan_task
+            except asyncio.CancelledError:
+                pass
+
         if self._unregister_status:
             self._unregister_status()
         if self._unregister_disconnect:
@@ -297,11 +350,80 @@ class DeviceHub:
 
         _LOGGER.info("Starting DP discovery scan (timeout=%ds, clear_existing=%s)", DP_SCAN_TIMEOUT, clear_existing)
         engine = DPDiscoveryEngine(self._connection)
-        if progress_callback:
-            engine.set_progress_callback(progress_callback)
+
+        # Wrap progress callback to also update hub state
+        def _progress_wrapper(
+            current: int, total: int, batch_start: int, batch_end: int, found_dp_ids: list[int]
+        ) -> None:
+            self._scan_progress = {
+                "status": f"Scanning DPs {batch_start}-{batch_end} ({current}/{total})",
+                "found_count": str(len(found_dp_ids)),
+                "found_dps": ", ".join(str(d) for d in found_dp_ids) if found_dp_ids else "none yet",
+            }
+            if progress_callback:
+                progress_callback(current, total, batch_start, batch_end, found_dp_ids)
+
+        engine.set_progress_callback(_progress_wrapper)
+
+        # Retry loop: if device disconnects mid-scan, wait for reconnect and resume
+        scan_start = DP_SCAN_START
+        all_found: dict[int, DiscoveredDP] = {}
+
+        async def _scan_with_retries() -> list[DiscoveredDP]:
+            nonlocal scan_start, all_found
+            for attempt in range(DP_SCAN_MAX_RETRIES + 1):
+                result = await engine.scan_all(range_start=scan_start)
+
+                # Merge newly discovered DPs
+                for dp in result.discovered:
+                    all_found[dp.dp_id] = dp
+
+                if result.completed:
+                    break
+
+                # Scan was interrupted by disconnect
+                if attempt >= DP_SCAN_MAX_RETRIES:
+                    _LOGGER.warning(
+                        "DP scan interrupted at DP %d, max retries (%d) exhausted",
+                        result.last_batch_end, DP_SCAN_MAX_RETRIES,
+                    )
+                    break
+
+                _LOGGER.warning(
+                    "DP scan interrupted at DP %d (found %d DPs so far), "
+                    "waiting up to %ds for reconnect (attempt %d/%d)",
+                    result.last_batch_end,
+                    len(all_found),
+                    DP_SCAN_RECONNECT_WAIT,
+                    attempt + 1,
+                    DP_SCAN_MAX_RETRIES,
+                )
+
+                # Wait for reconnect by polling is_connected
+                reconnected = False
+                for _ in range(DP_SCAN_RECONNECT_WAIT // 2):
+                    await asyncio.sleep(2)
+                    if self._connection.is_connected:
+                        reconnected = True
+                        break
+
+                if not reconnected:
+                    _LOGGER.warning(
+                        "Device did not reconnect within %ds, stopping scan",
+                        DP_SCAN_RECONNECT_WAIT,
+                    )
+                    break
+
+                _LOGGER.info(
+                    "Device reconnected, resuming DP scan from DP %d",
+                    result.last_batch_end + 1,
+                )
+                scan_start = result.last_batch_end + 1
+
+            return sorted(all_found.values(), key=lambda dp: dp.dp_id)
 
         discovered = await asyncio.wait_for(
-            engine.scan_all(), timeout=DP_SCAN_TIMEOUT
+            _scan_with_retries(), timeout=DP_SCAN_TIMEOUT
         )
         _LOGGER.info("DP discovery scan returned %d DPs", len(discovered))
 

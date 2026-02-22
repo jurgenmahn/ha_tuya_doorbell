@@ -102,14 +102,15 @@
       },
       "dp_scan_mode": {
         "title": "Scan for Datapoints",
-        "description": "Configure scan options before starting.",
+        "description": "The scan queries the device for all available datapoints (DPs 1-255). This can take up to 2 minutes.\n\nYou can safely close this dialog while the scan runs — just come back here to see the results.",
         "data": {
-          "clear_existing": "Clear existing datapoints (replace all with scan results)"
+          "clear_existing": "Clear existing datapoints (replace all with scan results)",
+          "force_rescan": "Force new scan (discard previous results)"
         }
       },
       "dp_scan": {
         "title": "Scanning for Datapoints",
-        "description": "{status}\n\nFound {found_count} datapoint(s): {found_dps}",
+        "description": "{status}\n\nFound {found_count} datapoint(s): {found_dps}\n\nYou can close this dialog — the scan will continue in the background. Come back to see results.",
         "progress_action": {
           "dp_scan": "Scanning datapoints on the device..."
         }

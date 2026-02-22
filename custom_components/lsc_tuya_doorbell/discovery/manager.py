@@ -108,12 +108,20 @@ class DiscoveryManager:
         subnet: str | None = None,
     ) -> str | None:
         """Full discovery: UDP listener → TCP scan fallback. Returns IP or None."""
-        # Step 1: Try UDP
+        # Step 1: Try UDP (matches by gwId/device_id from broadcast)
         device = await self.find_device(device_id, timeout=10.0)
         if device:
-            return device.ip
+            # Validate with local_key crypto handshake to prevent wrong-device switch
+            scanner = TCPScanner()
+            if await scanner.identify_device(device.ip, device_id, local_key, version):
+                return device.ip
+            _LOGGER.warning(
+                "Device at %s matched device_id %s via UDP but failed local_key "
+                "validation — this is a different device, ignoring",
+                device.ip, device_id,
+            )
 
-        # Step 2: TCP subnet scan
+        # Step 2: TCP subnet scan (already validates via crypto handshake)
         _LOGGER.info("UDP discovery failed for %s, falling back to TCP scan", device_id)
         scanner = TCPScanner()
         hosts = await scanner.scan_subnet(subnet)
