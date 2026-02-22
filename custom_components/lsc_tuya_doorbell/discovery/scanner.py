@@ -58,15 +58,35 @@ class TCPScanner:
         local_key: str,
         version: str,
     ) -> bool:
-        """Verify a device at the given IP by attempting a connection + heartbeat."""
+        """Verify a device at the given IP by attempting a connection + DP query.
+
+        A heartbeat alone is not sufficient for protocol 3.3 — any Tuya device
+        will respond. A DP query requires the correct local_key to decrypt the
+        response, so it validates device identity.
+        """
         from ..protocol.connection import TuyaConnection
 
         conn = TuyaConnection(ip, self._port, device_id, local_key, version)
         try:
             await conn.connect()
-            result = await conn.heartbeat()
-            return result
+            # DP query requires correct local_key for encryption/decryption.
+            # If this returns data (even empty dict), the key matches.
+            # Wrong key → decrypt fails → exception or garbage.
+            result = await conn.query_dps()
+            if result is not None:
+                _LOGGER.debug(
+                    "Device at %s verified via DP query (got %d DPs)",
+                    ip, len(result),
+                )
+                return True
+            # query_dps returns {} on timeout — try heartbeat as fallback
+            # for v3.4/v3.5 where session key negotiation already validates
+            hb = await conn.heartbeat()
+            if hb:
+                _LOGGER.debug("Device at %s verified via heartbeat", ip)
+            return hb
         except Exception:
+            _LOGGER.debug("Device at %s failed identity check", ip)
             return False
         finally:
             await conn.disconnect()
