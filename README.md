@@ -6,6 +6,61 @@ This is a complete rewrite of the original integration, built from scratch with 
 
 Available at Action stores across the Netherlands and other European countries, these affordable Tuya-based smart doorbells now integrate seamlessly with Home Assistant over your local network.
 
+## Release Notes
+
+### v2.8.0 — Connected binary sensor, configurable snapshot triggers, improved labels
+- New **Connected** diagnostic binary sensor (`device_class: connectivity`) that reflects real-time connection state — useful for automations on connect/disconnect
+- **Snapshot trigger DPs** are now configurable in **Camera Settings** via a multi-select of your discovered datapoints (by name) — no longer hardcoded to DP 185
+- Improved `force_record_on` label to explain the Tuya quirk (ONVIF/recording randomly disabled)
+
+### v2.7.0 — Auto-recovery for Record Switch (DP 101)
+- New **Auto-enable Record Switch** option in Camera Settings — automatically forces DP 101 back on when the device disables it (which breaks ONVIF/RTSP)
+- 2-second delay before re-enabling to avoid rapid toggle loops
+
+### v2.6.2 — Device identity validation fix
+- Fixed device identity check: v3.3 now requires actual DP data (not just heartbeat) to confirm the local key matches
+- v3.4/v3.5 relies on session key negotiation during connect
+
+### v2.6.0 — DP scan reliability and UI improvements
+- **DP scan resume on disconnect** — waits up to 30s for reconnect and resumes from where it stopped (up to 3 retries)
+- **Auto-include event DPs** — Doorbell Button (185) and Motion Detection (115) now automatically included in scan results (they only fire on physical events)
+- **Scan UI persistence** — close the dialog during a scan, come back to see results
+- **Force rescan option** — checkbox to discard previous results and start fresh
+- Fixed `progress_done` race condition and `vol.Ensure` crash in scan results
+- Reduced device22 query retries to prevent device overload during scanning
+- Cleaner disconnect logging (one-liner instead of full traceback)
+- Suppressed UDP decrypt noise from other Tuya devices on the network
+
+### v2.5.1 — DP scanning fixes and ONVIF password persistence
+- Fixed ONVIF password lost on reboot/options save
+- Fixed DP scan hanging: reverted concurrent scanning, use sequential larger batches with delay
+- Fixed `CancelledError` crash in `query_dps` on device disconnect during setup
+
+### v2.5.0 — DP scanning overhaul
+- **Real-time scan progress UI** — shows current batch range, found count, and discovered DP IDs
+- **120-second scan timeout** — prevents UI spinner from hanging forever
+- **Merge/Replace option** — choose to merge scan results into existing DPs or clear and replace all
+- Early disconnect abort during scan
+
+### v2.4.0 — HACS and packaging update
+- Updated HACS manifest for v2.4.0 compatibility
+
+### v2.3.0 — Custom DPs, video stream, and snapshots
+- Added option to add custom DP IDs via the options UI
+- Implemented RTSP video stream camera entity
+- Automatic snapshot capture on doorbell press
+- Improved debug logging
+- Fixed config reload issue after saving settings
+
+### v2.0.0 — Complete rewrite
+- Rebuilt from scratch with clean async architecture
+- Tuya protocol 3.3, 3.4, and 3.5 support with automatic session key negotiation
+- Automatic DP discovery and dynamic entity creation
+- Resilient connection with heartbeat monitoring and exponential backoff reconnection
+- Zero external dependencies beyond `cryptography`
+
+---
+
 ## What's new in v2
 
 - **Complete protocol rewrite** — Clean async implementation supporting Tuya protocol 3.3, 3.4, and 3.5 with automatic session key negotiation
