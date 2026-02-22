@@ -353,7 +353,7 @@ class LscTuyaDoorbellOptionsFlow(OptionsFlow):
             self.hass.config_entries.async_update_entry(
                 self._config_entry, data=new_data
             )
-            return self.async_create_entry(title="", data=user_input)
+            return self.async_create_entry(title="", data=self._config_entry.options)
 
         current = self._config_entry.data
         return self.async_show_form(
@@ -488,7 +488,7 @@ class LscTuyaDoorbellOptionsFlow(OptionsFlow):
             await self.hass.config_entries.async_reload(
                 self._config_entry.entry_id
             )
-            return self.async_create_entry(title="", data={})
+            return self.async_create_entry(title="", data=self._config_entry.options)
 
         return self.async_show_form(
             step_id="dp_edit",
@@ -528,7 +528,7 @@ class LscTuyaDoorbellOptionsFlow(OptionsFlow):
                 await self.hass.config_entries.async_reload(
                     self._config_entry.entry_id
                 )
-                return self.async_create_entry(title="", data={})
+                return self.async_create_entry(title="", data=self._config_entry.options)
 
         return self.async_show_form(
             step_id="dp_add",
@@ -677,7 +677,7 @@ class LscTuyaDoorbellOptionsFlow(OptionsFlow):
                 await self.hass.config_entries.async_reload(
                     self._config_entry.entry_id
                 )
-            return self.async_create_entry(title="", data={})
+            return self.async_create_entry(title="", data=self._config_entry.options)
 
         # Check for scan error
         scan_error = getattr(self, "_scan_error", None)
