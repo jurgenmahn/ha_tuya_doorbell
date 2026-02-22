@@ -108,7 +108,7 @@ class UDPDiscoveryListener:
                 try:
                     payload_bytes = TuyaCipher.decrypt_udp(payload_bytes)
                 except Exception:
-                    _LOGGER.debug("Failed to decrypt UDP broadcast from %s", addr[0])
+                    # Other Tuya devices on the network — not our device, ignore
                     return
 
             # Parse JSON

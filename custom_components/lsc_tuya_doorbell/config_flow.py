@@ -302,6 +302,7 @@ class LscTuyaDoorbellOptionsFlow(OptionsFlow):
         self._config_entry = config_entry
         self._editing_dp_id: int | None = None
         self._scan_clear_existing: bool = False
+        self._scan_progress_shown: bool = False
 
     def _get_hub(self):
         """Get the DeviceHub for this config entry."""
@@ -612,6 +613,7 @@ class LscTuyaDoorbellOptionsFlow(OptionsFlow):
 
         # Task still running — show spinner
         if hub.scan_running:
+            self._scan_progress_shown = True
             return self.async_show_progress(
                 step_id="dp_scan",
                 progress_action="dp_scan",
@@ -619,10 +621,19 @@ class LscTuyaDoorbellOptionsFlow(OptionsFlow):
                 description_placeholders=hub.scan_progress,
             )
 
-        # Task finished — transition out of progress spinner
+        # Task finished
+        if self._scan_progress_shown:
+            # Normal flow: HA re-invoked us after progress completed
+            self._scan_progress_shown = False
+            if hub.scan_error:
+                return self.async_show_progress_done(next_step_id="dp_scan_failed")
+            return self.async_show_progress_done(next_step_id="dp_scan_results")
+
+        # Scan finished before we could show progress (race condition)
+        # Go directly to results without progress_done
         if hub.scan_error:
-            return self.async_show_progress_done(next_step_id="dp_scan_failed")
-        return self.async_show_progress_done(next_step_id="dp_scan_results")
+            return await self.async_step_dp_scan_failed()
+        return await self.async_step_dp_scan_results()
 
     async def _run_dp_scan(self, hub) -> None:
         """Background task: run the actual DP discovery. Stores results on hub."""
