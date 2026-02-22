@@ -22,7 +22,7 @@ DEFAULT_EVENT_RESET_TIMEOUT = 5  # seconds
 # DP discovery
 DP_SCAN_START = 1
 DP_SCAN_END = 255
-DP_SCAN_BATCH_SIZE = 50
+DP_SCAN_BATCH_SIZE = 20
 DP_SCAN_TIMEOUT = 120  # seconds — overall timeout for scan_all()
 
 # Discovery

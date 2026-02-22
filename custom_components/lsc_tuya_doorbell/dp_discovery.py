@@ -118,6 +118,9 @@ class DPDiscoveryEngine:
                         sorted(found.keys()),
                     )
 
+                # Small delay to avoid overwhelming the device
+                await asyncio.sleep(0.1)
+
                 # Bail early if the device disconnected
                 if not self._connection.is_connected:
                     _LOGGER.warning("DP scan aborted: device disconnected")
