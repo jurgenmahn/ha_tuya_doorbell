@@ -63,17 +63,26 @@ class DPDiscoveryEngine:
         total = range_end - range_start + 1
 
         # Phase 1: Query all DPs to get current state
-        _LOGGER.debug("DP scan phase 1: querying all DPs")
+        _LOGGER.info("DP scan phase 1: querying current DP state")
         try:
             dps = await self._connection.query_dps()
-            for dp_str, value in dps.items():
-                dp_id = int(dp_str)
-                found[dp_id] = self.classify_dp(dp_id, value)
-        except Exception:
-            _LOGGER.debug("Initial DP query failed", exc_info=True)
+            if dps:
+                _LOGGER.info("DP scan phase 1: got %d DPs from query: %s", len(dps), list(dps.keys()))
+                for dp_str, value in dps.items():
+                    dp_id = int(dp_str)
+                    found[dp_id] = self.classify_dp(dp_id, value)
+            else:
+                _LOGGER.info("DP scan phase 1: query returned empty")
+        except Exception as err:
+            _LOGGER.warning("DP scan phase 1: query failed: %s", err)
 
         # Phase 2: Sequential batch scan using UPDATEDPS
-        _LOGGER.debug("DP scan phase 2: batch UPDATEDPS scan")
+        num_batches = (total + DP_SCAN_BATCH_SIZE - 1) // DP_SCAN_BATCH_SIZE
+        _LOGGER.info(
+            "DP scan phase 2: scanning DP %d-%d in %d batches of %d (connected=%s)",
+            range_start, range_end, num_batches, DP_SCAN_BATCH_SIZE,
+            self._connection.is_connected,
+        )
         collected: dict[str, Any] = {}
 
         def _on_update(dps: dict) -> None:
@@ -83,29 +92,38 @@ class DPDiscoveryEngine:
 
         try:
             progress = 0
+            batch_num = 0
             for batch_start in range(range_start, range_end + 1, DP_SCAN_BATCH_SIZE):
                 batch_end = min(batch_start + DP_SCAN_BATCH_SIZE, range_end + 1)
                 dp_ids = list(range(batch_start, batch_end))
+                batch_num += 1
 
                 try:
-                    _LOGGER.debug("DP scan batch %d-%d", batch_start, batch_end - 1)
+                    _LOGGER.info(
+                        "DP scan batch %d/%d: DPs %d-%d (connected=%s)",
+                        batch_num, num_batches, batch_start, batch_end - 1,
+                        self._connection.is_connected,
+                    )
                     result = await self._connection.update_dps(dp_ids)
+                    if result:
+                        _LOGGER.info("DP scan batch %d/%d: got %d DPs: %s", batch_num, num_batches, len(result), list(result.keys()))
                     for dp_str, value in result.items():
                         dp_id = int(dp_str)
                         if dp_id not in found:
                             found[dp_id] = self.classify_dp(dp_id, value)
-                            _LOGGER.debug(
-                                "DP scan: found DP %d = %r (%s)",
+                            _LOGGER.info(
+                                "DP scan: discovered DP %d = %r (%s)",
                                 dp_id, value, found[dp_id].dp_type,
                             )
-                except Exception:
-                    pass
+                except Exception as err:
+                    _LOGGER.warning("DP scan batch %d/%d failed: %s", batch_num, num_batches, err)
 
                 # Check collected push updates
                 for dp_str, value in list(collected.items()):
                     dp_id = int(dp_str)
                     if dp_id not in found:
                         found[dp_id] = self.classify_dp(dp_id, value)
+                        _LOGGER.info("DP scan: discovered DP %d via push update", dp_id)
                 collected.clear()
 
                 progress += len(dp_ids)
@@ -123,7 +141,10 @@ class DPDiscoveryEngine:
 
                 # Bail early if the device disconnected
                 if not self._connection.is_connected:
-                    _LOGGER.warning("DP scan aborted: device disconnected")
+                    _LOGGER.warning(
+                        "DP scan aborted after batch %d/%d: device disconnected (found %d DPs so far)",
+                        batch_num, num_batches, len(found),
+                    )
                     break
 
         finally:

@@ -619,21 +619,28 @@ class LscTuyaDoorbellOptionsFlow(OptionsFlow):
 
     async def _run_dp_scan(self, hub) -> None:
         """Background task: run the actual DP discovery."""
+        _LOGGER.info("DP scan task started (clear_existing=%s)", self._scan_clear_existing)
         try:
             self._scan_results = await hub.discover_dps(
                 progress_callback=self._update_scan_progress,
                 clear_existing=self._scan_clear_existing,
             )
             self._scan_error = None
+            _LOGGER.info("DP scan task completed: found %d DPs", len(self._scan_results))
         except asyncio.TimeoutError:
             _LOGGER.warning("DP scan timed out")
             self._scan_results = []
             self._scan_error = "scan_timeout"
-        except ConnectionError:
+        except asyncio.CancelledError:
+            _LOGGER.warning("DP scan task was cancelled")
+            self._scan_results = []
+            self._scan_error = "scan_failed"
+        except ConnectionError as err:
+            _LOGGER.warning("DP scan connection error: %s", err)
             self._scan_results = []
             self._scan_error = "cannot_connect"
         except Exception:
-            _LOGGER.exception("DP scan failed")
+            _LOGGER.exception("DP scan failed with unexpected error")
             self._scan_results = []
             self._scan_error = "scan_failed"
 

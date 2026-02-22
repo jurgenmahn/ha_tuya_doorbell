@@ -197,6 +197,9 @@ class TuyaConnection:
             msg = await asyncio.wait_for(future, timeout=timeout)
             _LOGGER.debug("SendAndWait: got response cmd=%d seqno=%d retcode=%s", msg.command, msg.seqno, msg.retcode)
             return msg
+        except asyncio.CancelledError:
+            _LOGGER.debug("SendAndWait: future cancelled (disconnect?) cmd=%d seqno=%d", command, seqno)
+            raise ConnectionError(f"Connection lost during command {command} (seq {seqno})")
         except asyncio.TimeoutError:
             _LOGGER.debug("SendAndWait: timeout for cmd=%d seqno=%d", command, seqno)
             raise TimeoutError(f"No response for command {command} (seq {seqno})")

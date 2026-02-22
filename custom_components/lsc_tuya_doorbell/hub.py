@@ -295,6 +295,7 @@ class DeviceHub:
         if not self._connection.is_connected:
             raise ConnectionError("Not connected")
 
+        _LOGGER.info("Starting DP discovery scan (timeout=%ds, clear_existing=%s)", DP_SCAN_TIMEOUT, clear_existing)
         engine = DPDiscoveryEngine(self._connection)
         if progress_callback:
             engine.set_progress_callback(progress_callback)
@@ -302,6 +303,7 @@ class DeviceHub:
         discovered = await asyncio.wait_for(
             engine.scan_all(), timeout=DP_SCAN_TIMEOUT
         )
+        _LOGGER.info("DP discovery scan returned %d DPs", len(discovered))
 
         # Update profile
         dp_defs = self._dp_registry.merge_discovered(discovered)

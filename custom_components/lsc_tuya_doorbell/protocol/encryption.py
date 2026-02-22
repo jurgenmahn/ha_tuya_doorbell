@@ -103,7 +103,6 @@ class TuyaCipher:
     @staticmethod
     def decrypt_udp(data: bytes) -> bytes:
         """Decrypt UDP broadcast data using the fixed UDP key (AES-ECB)."""
-        _LOGGER.debug("UDP decrypt: %d bytes", len(data))
         cipher = Cipher(algorithms.AES(UDP_KEY), modes.ECB())
         decryptor = cipher.decryptor()
         padded = decryptor.update(data) + decryptor.finalize()
