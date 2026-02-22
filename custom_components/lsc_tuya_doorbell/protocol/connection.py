@@ -433,6 +433,8 @@ class TuyaConnection:
 
         except asyncio.CancelledError:
             return
+        except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError, OSError) as err:
+            _LOGGER.debug("Read loop: connection lost (%s)", err)
         except Exception:
             _LOGGER.debug("Read loop error", exc_info=True)
 
