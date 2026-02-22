@@ -5,6 +5,7 @@
   "config_flow": true,
   "dependencies": [],
   "documentation": "https://github.com/jurgenmahn/ha-lsc-tuya-v2",
+  "icon": "mdi:doorbell-video",
   "iot_class": "local_push",
   "issue_tracker": "https://github.com/jurgenmahn/ha-lsc-tuya-v2/issues",
   "requirements": ["cryptography>=41.0.0"],
