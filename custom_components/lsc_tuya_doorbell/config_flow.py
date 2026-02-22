@@ -11,6 +11,7 @@ import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry, ConfigFlow, OptionsFlow
 from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
+from homeassistant.helpers import config_validation as cv
 
 from .const import (
     CONF_DEVICE_ID,
@@ -737,10 +738,7 @@ class LscTuyaDoorbellOptionsFlow(OptionsFlow):
             data_schema=vol.Schema({
                 vol.Optional(
                     "selected_dps", default=default_selected
-                ): vol.All(
-                    vol.Ensure(list),
-                    [vol.In(dp_options)],
-                ),
+                ): cv.multi_select(dp_options),
             }),
             description_placeholders={"count": str(len(discovered))},
         )
