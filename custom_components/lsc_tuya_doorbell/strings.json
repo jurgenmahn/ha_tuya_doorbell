@@ -132,7 +132,7 @@
       "device_unavailable": "Device is not connected. Check the connection first.",
       "cannot_connect": "Could not connect to the device.",
       "scan_failed": "Datapoint scan failed. Check the logs for details.",
-      "scan_timeout": "Datapoint scan timed out after 60 seconds. The device may be slow or unresponsive."
+      "scan_timeout": "Datapoint scan timed out after 120 seconds. The device may be slow or unresponsive."
     }
   }
 }

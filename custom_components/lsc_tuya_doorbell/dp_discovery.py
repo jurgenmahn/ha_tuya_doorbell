@@ -11,7 +11,6 @@ from typing import Any, Callable
 
 from .const import (
     DP_SCAN_BATCH_SIZE,
-    DP_SCAN_CONCURRENCY,
     DP_SCAN_END,
     DP_SCAN_START,
     DP_TYPE_BOOL,
@@ -73,8 +72,8 @@ class DPDiscoveryEngine:
         except Exception:
             _LOGGER.debug("Initial DP query failed", exc_info=True)
 
-        # Phase 2: Concurrent batch scan using UPDATEDPS
-        _LOGGER.debug("DP scan phase 2: concurrent batch UPDATEDPS scan")
+        # Phase 2: Sequential batch scan using UPDATEDPS
+        _LOGGER.debug("DP scan phase 2: batch UPDATEDPS scan")
         collected: dict[str, Any] = {}
 
         def _on_update(dps: dict) -> None:
@@ -83,60 +82,46 @@ class DPDiscoveryEngine:
         unregister = self._connection.on_status_update(_on_update)
 
         try:
-            # Build all batches upfront
-            batches: list[tuple[int, int, list[int]]] = []
+            progress = 0
             for batch_start in range(range_start, range_end + 1, DP_SCAN_BATCH_SIZE):
                 batch_end = min(batch_start + DP_SCAN_BATCH_SIZE, range_end + 1)
                 dp_ids = list(range(batch_start, batch_end))
-                batches.append((batch_start, batch_end, dp_ids))
 
-            sem = asyncio.Semaphore(DP_SCAN_CONCURRENCY)
-            completed_count = 0
+                try:
+                    _LOGGER.debug("DP scan batch %d-%d", batch_start, batch_end - 1)
+                    result = await self._connection.update_dps(dp_ids)
+                    for dp_str, value in result.items():
+                        dp_id = int(dp_str)
+                        if dp_id not in found:
+                            found[dp_id] = self.classify_dp(dp_id, value)
+                            _LOGGER.debug(
+                                "DP scan: found DP %d = %r (%s)",
+                                dp_id, value, found[dp_id].dp_type,
+                            )
+                except Exception:
+                    pass
 
-            async def _scan_batch(
-                batch_start: int, batch_end: int, dp_ids: list[int]
-            ) -> None:
-                nonlocal completed_count
-                async with sem:
-                    if not self._connection.is_connected:
-                        return
-                    try:
-                        _LOGGER.debug("DP scan batch %d-%d", batch_start, batch_end - 1)
-                        result = await self._connection.update_dps(dp_ids)
-                        for dp_str, value in result.items():
-                            dp_id = int(dp_str)
-                            if dp_id not in found:
-                                found[dp_id] = self.classify_dp(dp_id, value)
-                                _LOGGER.debug(
-                                    "DP scan: found DP %d = %r (%s)",
-                                    dp_id, value, found[dp_id].dp_type,
-                                )
-                    except Exception:
-                        pass
+                # Check collected push updates
+                for dp_str, value in list(collected.items()):
+                    dp_id = int(dp_str)
+                    if dp_id not in found:
+                        found[dp_id] = self.classify_dp(dp_id, value)
+                collected.clear()
 
-                    completed_count += len(dp_ids)
-                    if self._on_progress:
-                        self._on_progress(
-                            completed_count,
-                            total,
-                            batch_start,
-                            batch_end - 1,
-                            sorted(found.keys()),
-                        )
+                progress += len(dp_ids)
+                if self._on_progress:
+                    self._on_progress(
+                        progress,
+                        total,
+                        batch_start,
+                        batch_end - 1,
+                        sorted(found.keys()),
+                    )
 
-            await asyncio.gather(
-                *(_scan_batch(bs, be, ids) for bs, be, ids in batches)
-            )
-
-            # Check for any push updates collected during the scan
-            for dp_str, value in collected.items():
-                dp_id = int(dp_str)
-                if dp_id not in found:
-                    found[dp_id] = self.classify_dp(dp_id, value)
-
-            # Bail-early check after gather completes
-            if not self._connection.is_connected:
-                _LOGGER.warning("DP scan: device disconnected during scan")
+                # Bail early if the device disconnected
+                if not self._connection.is_connected:
+                    _LOGGER.warning("DP scan aborted: device disconnected")
+                    break
 
         finally:
             unregister()
