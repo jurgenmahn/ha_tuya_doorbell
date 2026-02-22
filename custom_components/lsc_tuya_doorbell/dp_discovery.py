@@ -119,7 +119,7 @@ class DPDiscoveryEngine:
                         batch_num, num_batches, batch_start, batch_end - 1,
                         self._connection.is_connected,
                     )
-                    result = await self._connection.update_dps(dp_ids)
+                    result = await self._connection.update_dps(dp_ids, max_retries=1)
                     if result:
                         _LOGGER.info("DP scan batch %d/%d: got %d DPs: %s", batch_num, num_batches, len(result), list(result.keys()))
                     for dp_str, value in result.items():

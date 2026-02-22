@@ -220,13 +220,20 @@ class TuyaConnection:
             _LOGGER.debug("Heartbeat: failed — %s", err)
             return False
 
-    async def query_dps(self, dp_ids: list[int] | None = None) -> dict:
+    async def query_dps(
+        self, dp_ids: list[int] | None = None, max_retries: int = 3,
+    ) -> dict:
         """Query datapoint values from the device.
 
         device22 (22-char IDs) use CONTROL_NEW instead of DP_QUERY and require
         a dps dict in the payload with the requested DP IDs set to None.
         The device22 responds with an empty ack, then sends DPS data as
         STATUS (cmd 8) pushes.
+
+        Args:
+            dp_ids: List of DP IDs to query. None queries all.
+            max_retries: Number of attempts for device22 STATUS wait (default 3).
+                Use 1 during DP scanning to avoid overloading the device.
         """
         if self._is_device22:
             payload: dict[str, Any] = {
@@ -254,7 +261,7 @@ class TuyaConnection:
                 # device22: send CONTROL_NEW, then wait for STATUS push with DPS.
                 # The device sends an empty ack first, then a separate STATUS push.
                 # Retry if no STATUS push arrives (device can be intermittent).
-                for attempt in range(3):
+                for attempt in range(max_retries):
                     loop = asyncio.get_event_loop()
                     status_future: asyncio.Future[TuyaMessage] = loop.create_future()
                     status_key = f"cmd_{Command.STATUS}"
@@ -268,14 +275,14 @@ class TuyaConnection:
                         return msg.data.get("dps", {})
                     except asyncio.CancelledError:
                         _LOGGER.debug(
-                            "STATUS future cancelled (device disconnected?) during query (attempt %d/3)",
-                            attempt + 1,
+                            "STATUS future cancelled (device disconnected?) during query (attempt %d/%d)",
+                            attempt + 1, max_retries,
                         )
                         break
                     except asyncio.TimeoutError:
                         _LOGGER.debug(
-                            "No STATUS response for device22 query (attempt %d/3)",
-                            attempt + 1,
+                            "No STATUS response for device22 query (attempt %d/%d)",
+                            attempt + 1, max_retries,
                         )
                     finally:
                         self._pending_responses.pop(status_key, None)
@@ -316,15 +323,19 @@ class TuyaConnection:
             _LOGGER.debug("Set DPS failed: %s", err)
             return None
 
-    async def update_dps(self, dp_ids: list[int]) -> dict:
+    async def update_dps(self, dp_ids: list[int], max_retries: int = 3) -> dict:
         """Request a DPS refresh for specific datapoints.
 
         For device22, we use CONTROL_NEW with dps:{id:null} since these
         devices respond to that format. For standard devices, use UPDATEDPS
         with dpId list.
+
+        Args:
+            dp_ids: List of DP IDs to refresh.
+            max_retries: Retry count for device22 STATUS wait (default 3).
         """
         if self._is_device22:
-            return await self.query_dps(dp_ids)
+            return await self.query_dps(dp_ids, max_retries=max_retries)
 
         payload: dict[str, Any] = {
             "dpId": dp_ids,
