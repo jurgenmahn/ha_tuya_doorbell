@@ -19,6 +19,7 @@ from .const import (
     CONF_DEVICE_NAME,
     CONF_FORCE_RECORD_ON,
     CONF_HOST,
+    CONF_SNAPSHOT_TRIGGER_DPS,
     CONF_LOCAL_KEY,
     CONF_ONVIF_PASSWORD,
     CONF_ONVIF_USERNAME,
@@ -101,6 +102,9 @@ class DeviceHub:
 
         # Entity callbacks: dp_id -> list of callbacks
         self._entity_callbacks: dict[int, list[Callable[[Any], None]]] = {}
+
+        # Connection state callbacks (for Connected binary sensor etc.)
+        self._connection_callbacks: list[Callable[[bool], None]] = []
 
         # Event counters
         self._event_counters: dict[int, int] = {}
@@ -229,6 +233,23 @@ class DeviceHub:
             callbacks.remove(callback)
             _LOGGER.debug("Entity unregistered for DP %d (remaining: %d)", dp_id, len(callbacks))
 
+    def register_connection_callback(self, callback: Callable[[bool], None]) -> None:
+        """Register a callback for connection state changes."""
+        self._connection_callbacks.append(callback)
+
+    def unregister_connection_callback(self, callback: Callable[[bool], None]) -> None:
+        """Unregister a connection state callback."""
+        if callback in self._connection_callbacks:
+            self._connection_callbacks.remove(callback)
+
+    def _notify_connection_callbacks(self, connected: bool) -> None:
+        """Notify all connection state callbacks."""
+        for callback in self._connection_callbacks:
+            try:
+                callback(connected)
+            except Exception:
+                _LOGGER.debug("Connection callback error", exc_info=True)
+
     async def async_setup(self) -> bool:
         """Set up the device hub: connect, load profile, start heartbeat."""
         _LOGGER.info(
@@ -260,6 +281,7 @@ class DeviceHub:
             self._heartbeat_failures = 0
             _LOGGER.debug("Connected to %s:%s, firing connected event", self._host, self._port)
             self._fire_event(EVENT_CONNECTED)
+            self._notify_connection_callbacks(True)
 
             # Start heartbeat
             self._heartbeat_task = asyncio.ensure_future(self._heartbeat_loop())
@@ -512,6 +534,19 @@ class DeviceHub:
 
     # --- Internal methods ---
 
+    def _get_snapshot_trigger_dps(self) -> set[int]:
+        """Return the set of DP IDs that should trigger an RTSP snapshot."""
+        raw = self._config_entry.options.get(CONF_SNAPSHOT_TRIGGER_DPS, [])
+        if not raw:
+            return {DP_DOORBELL_BUTTON}  # default: doorbell button only
+        # Handle both list (new multi-select) and string (legacy) formats
+        try:
+            if isinstance(raw, list):
+                return {int(x) for x in raw if str(x).strip()}
+            return {int(x.strip()) for x in raw.split(",") if x.strip()}
+        except (ValueError, AttributeError):
+            return {DP_DOORBELL_BUTTON}
+
     def _handle_status_update(self, dps: dict) -> None:
         """Process incoming DPS updates from the device."""
         _LOGGER.debug("StatusUpdate: received DPS=%s", dps)
@@ -571,8 +606,9 @@ class DeviceHub:
             "raw_value": str(value) if not isinstance(value, (str, int, float, bool)) else value,
         }
 
-        # Capture RTSP snapshot on doorbell press
-        if dp_id == DP_DOORBELL_BUTTON and self.rtsp_url:
+        # Capture RTSP snapshot on configured trigger DPs
+        snapshot_trigger_dps = self._get_snapshot_trigger_dps()
+        if dp_id in snapshot_trigger_dps and self.rtsp_url:
             asyncio.ensure_future(self._capture_snapshot_for_event(event_data, slug, event_type))
         else:
             self._fire_event(f"{event_type}_{slug}", event_data)
@@ -679,6 +715,7 @@ class DeviceHub:
         """Handle connection loss."""
         self._available = False
         self._fire_event(EVENT_DISCONNECTED)
+        self._notify_connection_callbacks(False)
         _LOGGER.warning("Connection lost to %s (%s)", self._device_name, self._host)
 
         # Start reconnect
@@ -730,6 +767,7 @@ class DeviceHub:
                         self._available = True
                         self._heartbeat_failures = 0
                         self._fire_event(EVENT_CONNECTED)
+                        self._notify_connection_callbacks(True)
                         _LOGGER.info("Reconnected to %s at %s", self._device_id, self._host)
 
                         # Restart heartbeat
@@ -785,6 +823,7 @@ class DeviceHub:
                         self._available = True
                         self._heartbeat_failures = 0
                         self._fire_event(EVENT_CONNECTED)
+                        self._notify_connection_callbacks(True)
                         if self._heartbeat_task and not self._heartbeat_task.done():
                             self._heartbeat_task.cancel()
                         self._heartbeat_task = asyncio.ensure_future(self._heartbeat_loop())

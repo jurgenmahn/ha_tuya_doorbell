@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 DOMAIN = "lsc_tuya_doorbell"
-VERSION = "2.7.0"
+VERSION = "2.8.0"
 
 # Connection defaults
 DEFAULT_PORT = 6668
@@ -50,6 +50,7 @@ CONF_RTSP_PORT = "rtsp_port"
 CONF_RTSP_PATH = "rtsp_path"
 CONF_SNAPSHOT_PATH = "snapshot_path"
 CONF_FORCE_RECORD_ON = "force_record_on"
+CONF_SNAPSHOT_TRIGGER_DPS = "snapshot_trigger_dps"
 
 DEFAULT_ONVIF_USERNAME = "admin"
 DEFAULT_RTSP_PORT = 8554

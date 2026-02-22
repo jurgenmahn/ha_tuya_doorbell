@@ -15,6 +15,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import async_call_later
+from homeassistant.helpers.restore_state import RestoreEntity
 
 from .const import (
     DEFAULT_EVENT_RESET_TIMEOUT,
@@ -52,7 +53,10 @@ async def async_setup_entry(
             if dp_def:
                 entities.append(LscTuyaBinarySensor(hub, dp_def))
 
-    _LOGGER.debug("BinarySensor setup: creating %d entities: %s", len(entities), [e._dp_id for e in entities])
+    # Always add the Connected sensor (not DP-based)
+    entities.append(LscTuyaConnectedSensor(hub))
+
+    _LOGGER.debug("BinarySensor setup: creating %d entities", len(entities))
     async_add_entities(entities)
 
 
@@ -134,3 +138,37 @@ class LscTuyaBinarySensor(LscTuyaEntity, BinarySensorEntity):
             self._event_counter = last_state.attributes.get("event_counter", 0)
             self._last_image_url = last_state.attributes.get("last_image_url")
         _LOGGER.debug("BinarySensor DP %d: restored (counter=%d)", self._dp_id, self._event_counter)
+
+
+class LscTuyaConnectedSensor(RestoreEntity, BinarySensorEntity):
+    """Binary sensor that reflects device connection state (hub.available)."""
+
+    _attr_has_entity_name = True
+    _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_name = "Connected"
+
+    def __init__(self, hub: DeviceHub) -> None:
+        self._hub = hub
+        self._attr_unique_id = f"{hub.device_id}_connected"
+
+    @property
+    def device_info(self):
+        return self._hub.device_info
+
+    @property
+    def is_on(self) -> bool:
+        return self._hub.available
+
+    @callback
+    def _handle_connection_change(self, connected: bool) -> None:
+        """Handle connection state change from hub."""
+        self.async_write_ha_state()
+
+    async def async_added_to_hass(self) -> None:
+        """Register connection callback when added to HA."""
+        self._hub.register_connection_callback(self._handle_connection_change)
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Unregister connection callback when removed."""
+        self._hub.unregister_connection_callback(self._handle_connection_change)

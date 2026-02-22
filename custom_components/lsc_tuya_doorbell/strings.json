@@ -98,7 +98,8 @@
           "rtsp_port": "RTSP Port",
           "rtsp_path": "RTSP Stream Path",
           "snapshot_path": "Snapshot Save Directory",
-          "force_record_on": "Auto-enable Record Switch (DP 101) when device disables it"
+          "force_record_on": "Auto-enable Record Switch (DP 101) — some Tuya devices randomly disable ONVIF/recording; this forces it back on",
+          "snapshot_trigger_dps": "Capture RTSP snapshot on event — select which datapoints trigger a video snapshot (default: Doorbell Button only)"
         }
       },
       "dp_scan_mode": {

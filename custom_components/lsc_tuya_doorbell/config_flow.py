@@ -20,6 +20,7 @@ from .const import (
     CONF_LOCAL_KEY,
     CONF_FORCE_RECORD_ON,
     CONF_ONVIF_PASSWORD,
+    CONF_SNAPSHOT_TRIGGER_DPS,
     CONF_ONVIF_USERNAME,
     CONF_PORT,
     CONF_PROTOCOL_VERSION,
@@ -392,11 +393,36 @@ class LscTuyaDoorbellOptionsFlow(OptionsFlow):
             new_options[CONF_FORCE_RECORD_ON] = user_input.get(
                 CONF_FORCE_RECORD_ON, False
             )
+            new_options[CONF_SNAPSHOT_TRIGGER_DPS] = user_input.get(
+                CONF_SNAPSHOT_TRIGGER_DPS, []
+            )
             return self.async_create_entry(title="", data=new_options)
 
         # Get current values from options or entry data
         opts = self._config_entry.options
         data = self._config_entry.data
+
+        # Build multi-select for snapshot trigger DPs from discovered DPs
+        hub = self._get_hub()
+        snapshot_dp_options: dict[str, str] = {}
+        if hub and hub.profile:
+            for dp_id in sorted(hub.profile.discovered_dps):
+                dp_def = hub.profile.discovered_dps[dp_id]
+                snapshot_dp_options[str(dp_id)] = (
+                    f"DP {dp_id}: {dp_def.name}"
+                )
+        if not snapshot_dp_options:
+            # Fallback if no DPs discovered yet
+            snapshot_dp_options["185"] = "DP 185: Doorbell Button"
+            snapshot_dp_options["115"] = "DP 115: Motion Detection"
+
+        # Current selection — handle both list (new) and string (legacy) formats
+        current_triggers = opts.get(CONF_SNAPSHOT_TRIGGER_DPS, [])
+        if isinstance(current_triggers, str):
+            current_triggers = [
+                x.strip() for x in current_triggers.split(",") if x.strip()
+            ]
+
         return self.async_show_form(
             step_id="camera_settings",
             data_schema=vol.Schema({
@@ -427,6 +453,10 @@ class LscTuyaDoorbellOptionsFlow(OptionsFlow):
                     CONF_FORCE_RECORD_ON,
                     default=opts.get(CONF_FORCE_RECORD_ON, False),
                 ): bool,
+                vol.Optional(
+                    CONF_SNAPSHOT_TRIGGER_DPS,
+                    default=current_triggers,
+                ): cv.multi_select(snapshot_dp_options),
             }),
         )
 
