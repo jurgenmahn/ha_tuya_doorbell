@@ -97,7 +97,8 @@
           "onvif_password": "ONVIF/RTSP Password",
           "rtsp_port": "RTSP Port",
           "rtsp_path": "RTSP Stream Path",
-          "snapshot_path": "Snapshot Save Directory"
+          "snapshot_path": "Snapshot Save Directory",
+          "force_record_on": "Auto-enable Record Switch (DP 101) when device disables it"
         }
       },
       "dp_scan_mode": {

@@ -17,6 +17,7 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from .const import (
     CONF_DEVICE_ID,
     CONF_DEVICE_NAME,
+    CONF_FORCE_RECORD_ON,
     CONF_HOST,
     CONF_LOCAL_KEY,
     CONF_ONVIF_PASSWORD,
@@ -35,6 +36,7 @@ from .const import (
     DOMAIN,
     DP_DOORBELL_BUTTON,
     DP_MOTION_DETECTION,
+    DP_RECORD_SWITCH,
     DP_SCAN_MAX_RETRIES,
     DP_SCAN_RECONNECT_WAIT,
     DP_SCAN_START,
@@ -532,6 +534,24 @@ class DeviceHub:
                     callback(value)
                 except Exception:
                     _LOGGER.debug("Entity callback error for DP %s", dp_id, exc_info=True)
+
+            # Auto-recovery: force Record Switch (DP 101) back on
+            if (
+                dp_id == DP_RECORD_SWITCH
+                and value is False
+                and self._config_entry.options.get(CONF_FORCE_RECORD_ON, False)
+            ):
+                _LOGGER.warning(
+                    "Record Switch (DP %d) turned off by device — "
+                    "scheduling auto-recovery in 2s",
+                    DP_RECORD_SWITCH,
+                )
+                self._hass.loop.call_later(
+                    2,
+                    lambda: asyncio.ensure_future(
+                        self.set_dp(DP_RECORD_SWITCH, True)
+                    ),
+                )
 
     def _handle_event(self, dp_id: int, value: Any, event_type: str) -> None:
         """Handle a doorbell/motion event."""

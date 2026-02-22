@@ -18,6 +18,7 @@ from .const import (
     CONF_DEVICE_NAME,
     CONF_HOST,
     CONF_LOCAL_KEY,
+    CONF_FORCE_RECORD_ON,
     CONF_ONVIF_PASSWORD,
     CONF_ONVIF_USERNAME,
     CONF_PORT,
@@ -388,6 +389,9 @@ class LscTuyaDoorbellOptionsFlow(OptionsFlow):
             new_options[CONF_SNAPSHOT_PATH] = user_input.get(
                 CONF_SNAPSHOT_PATH, DEFAULT_SNAPSHOT_PATH
             )
+            new_options[CONF_FORCE_RECORD_ON] = user_input.get(
+                CONF_FORCE_RECORD_ON, False
+            )
             return self.async_create_entry(title="", data=new_options)
 
         # Get current values from options or entry data
@@ -419,6 +423,10 @@ class LscTuyaDoorbellOptionsFlow(OptionsFlow):
                     CONF_SNAPSHOT_PATH,
                     default=opts.get(CONF_SNAPSHOT_PATH, DEFAULT_SNAPSHOT_PATH),
                 ): str,
+                vol.Optional(
+                    CONF_FORCE_RECORD_ON,
+                    default=opts.get(CONF_FORCE_RECORD_ON, False),
+                ): bool,
             }),
         )
 
