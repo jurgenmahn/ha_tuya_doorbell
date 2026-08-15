@@ -15,6 +15,7 @@ from .const import (
     CONF_ONVIF_USERNAME,
     CONF_RTSP_PATH,
     CONF_RTSP_PORT,
+    CONF_STREAM_URL_OVERRIDE,
     DEFAULT_ONVIF_USERNAME,
     DEFAULT_RTSP_PATH,
     DEFAULT_RTSP_PORT,
@@ -115,9 +116,20 @@ class LscTuyaCamera(Camera):
         return None
 
     def _build_rtsp_url(self) -> str | None:
-        """Construct the RTSP URL from config."""
+        """Construct the RTSP URL from config.
+
+        A configured stream URL override wins over the URL built from
+        host, port and path. That lets the stream come from a restreamer
+        (go2rtc, mediamtx, ...) while the hub keeps talking to the
+        doorbell directly on the local Tuya port, including its own IP
+        rediscovery.
+        """
         opts = self._config_entry.options
         data = self._config_entry.data
+
+        override = (opts.get(CONF_STREAM_URL_OVERRIDE) or "").strip()
+        if override:
+            return override
 
         password = opts.get(CONF_ONVIF_PASSWORD, data.get(CONF_ONVIF_PASSWORD, ""))
         if not password:

@@ -48,6 +48,14 @@ CONF_ONVIF_USERNAME = "onvif_username"
 CONF_ONVIF_PASSWORD = "onvif_password"
 CONF_RTSP_PORT = "rtsp_port"
 CONF_RTSP_PATH = "rtsp_path"
+# Optional full RTSP URL that replaces the one built from host/port/path.
+# Useful when the stream is served by a restreamer such as go2rtc, which
+# keeps a single connection to the doorbell and fans it out to multiple
+# consumers. Cameras typically accept only a handful of simultaneous RTSP
+# sessions, so this avoids "connection reset by peer" once Home Assistant,
+# HomeKit and any detection service all want the stream at the same time.
+# Leave empty to keep the default behaviour.
+CONF_STREAM_URL_OVERRIDE = "stream_url_override"
 CONF_SNAPSHOT_PATH = "snapshot_path"
 CONF_FORCE_RECORD_ON = "force_record_on"
 CONF_SNAPSHOT_TRIGGER_DPS = "snapshot_trigger_dps"

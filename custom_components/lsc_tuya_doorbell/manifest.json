@@ -1,14 +1,18 @@
 {
   "domain": "lsc_tuya_doorbell",
   "name": "LSC Tuya Doorbell",
-  "codeowners": ["@jurgenmahn"],
+  "codeowners": [
+    "@jurgenmahn"
+  ],
   "config_flow": true,
   "dependencies": [],
-  "documentation": "https://github.com/jurgenmahn/ha-lsc-tuya-v2",
+  "documentation": "https://github.com/jurgenmahn/ha_tuya_doorbell",
   "icon": "mdi:doorbell-video",
   "iot_class": "local_push",
-  "issue_tracker": "https://github.com/jurgenmahn/ha-lsc-tuya-v2/issues",
-  "requirements": ["cryptography>=41.0.0"],
-  "version": "2.8.0",
+  "issue_tracker": "https://github.com/jurgenmahn/ha_tuya_doorbell/issues",
+  "requirements": [
+    "cryptography>=41.0.0"
+  ],
+  "version": "2.9.0",
   "homeassistant": "2024.1.0"
 }
