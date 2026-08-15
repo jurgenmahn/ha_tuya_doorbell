@@ -478,6 +478,12 @@ custom_components/lsc_tuya_doorbell/
 
 The protocol implementation is independent of Home Assistant and can be used standalone (see the `tools/` directory).
 
+## Related projects
+
+- [LSC Doorbell Event Bridge](https://github.com/GiannBart/lsc-doorbell-event-bridge) — A Home Assistant App primarily intended for selected battery-powered LSC/Tuya video doorbells. It receives events through the Tuya Message Service and exposes motion detection, doorbell presses, snapshots, power mode, and battery level through MQTT.
+
+LSC Doorbell Event Bridge uses a cloud-event-based approach and may be useful for battery-powered devices that cannot maintain a stable local connection. For compatible wired or locally accessible devices, the local integration provided by this repository remains the recommended approach.
+
 ## Credits
 
 Built by [Jurgen Mahn](https://github.com/jurgenmahn) with [Claude Code](https://claude.ai/code).
