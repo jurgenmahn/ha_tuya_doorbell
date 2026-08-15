@@ -100,7 +100,8 @@
           "snapshot_path": "Snapshot Save Directory",
           "force_record_on": "Auto-enable Record Switch (DP 101) — some Tuya devices randomly disable ONVIF/recording; this forces it back on",
           "snapshot_trigger_dps": "Capture RTSP snapshot on event — select which datapoints trigger a video snapshot (default: Doorbell Button only)",
-          "stream_url_override": "Stream URL override — full RTSP URL to use instead of the one built from host/port/path. Point this at a restreamer such as go2rtc when multiple consumers need the stream; leave empty for the default."
+          "stream_url_override": "Stream URL override — full RTSP URL to use instead of the one built from host/port/path. Point this at a restreamer such as go2rtc when multiple consumers need the stream; leave empty for the default.",
+          "still_image_url_override": "Still image URL override — HTTP URL returning a single JPEG, used for snapshots instead of grabbing a frame off the RTSP stream. For go2rtc: http://HOST:1984/api/frame.jpeg?src=NAME. Leave empty for the default."
         }
       },
       "dp_scan_mode": {

@@ -5,9 +5,11 @@ from __future__ import annotations
 import asyncio
 import logging
 
+import aiohttp
 from homeassistant.components.camera import Camera, CameraEntityFeature
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import (
@@ -15,6 +17,7 @@ from .const import (
     CONF_ONVIF_USERNAME,
     CONF_RTSP_PATH,
     CONF_RTSP_PORT,
+    CONF_STILL_IMAGE_URL_OVERRIDE,
     CONF_STREAM_URL_OVERRIDE,
     DEFAULT_ONVIF_USERNAME,
     DEFAULT_RTSP_PATH,
@@ -24,6 +27,9 @@ from .const import (
 from .hub import DeviceHub
 
 _LOGGER = logging.getLogger(__name__)
+
+# Snapshots sit in front of notifications, so fail fast rather than hang.
+CLIENT_TIMEOUT = aiohttp.ClientTimeout(total=10)
 
 
 async def async_setup_entry(
@@ -80,7 +86,29 @@ class LscTuyaCamera(Camera):
     async def async_camera_image(
         self, width: int | None = None, height: int | None = None
     ) -> bytes | None:
-        """Grab a single frame from the RTSP stream using ffmpeg."""
+        """Return a single frame.
+
+        Prefers a configured still image URL, which lets a restreamer hand
+        over a ready-made JPEG. Without it the frame is pulled off the RTSP
+        stream with ffmpeg, which costs a decode per snapshot and opens an
+        extra session on a camera that may only allow a few.
+        """
+        still_url = (
+            self._config_entry.options.get(CONF_STILL_IMAGE_URL_OVERRIDE) or ""
+        ).strip()
+        if still_url:
+            try:
+                session = async_get_clientsession(self.hass)
+                async with session.get(still_url, timeout=CLIENT_TIMEOUT) as resp:
+                    resp.raise_for_status()
+                    return await resp.read()
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.warning(
+                    "Still image URL %s failed (%s), falling back to RTSP",
+                    still_url,
+                    err,
+                )
+
         rtsp_url = self._build_rtsp_url()
         if not rtsp_url:
             return None

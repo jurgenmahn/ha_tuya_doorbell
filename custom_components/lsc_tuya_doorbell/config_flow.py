@@ -26,6 +26,7 @@ from .const import (
     CONF_PROTOCOL_VERSION,
     CONF_RTSP_PATH,
     CONF_RTSP_PORT,
+    CONF_STILL_IMAGE_URL_OVERRIDE,
     CONF_STREAM_URL_OVERRIDE,
     CONF_SNAPSHOT_PATH,
     DEFAULT_ONVIF_USERNAME,
@@ -391,6 +392,9 @@ class LscTuyaDoorbellOptionsFlow(OptionsFlow):
             new_options[CONF_STREAM_URL_OVERRIDE] = user_input.get(
                 CONF_STREAM_URL_OVERRIDE, ""
             ).strip()
+            new_options[CONF_STILL_IMAGE_URL_OVERRIDE] = user_input.get(
+                CONF_STILL_IMAGE_URL_OVERRIDE, ""
+            ).strip()
             new_options[CONF_SNAPSHOT_PATH] = user_input.get(
                 CONF_SNAPSHOT_PATH, DEFAULT_SNAPSHOT_PATH
             )
@@ -452,6 +456,10 @@ class LscTuyaDoorbellOptionsFlow(OptionsFlow):
                 vol.Optional(
                     CONF_STREAM_URL_OVERRIDE,
                     default=opts.get(CONF_STREAM_URL_OVERRIDE, ""),
+                ): str,
+                vol.Optional(
+                    CONF_STILL_IMAGE_URL_OVERRIDE,
+                    default=opts.get(CONF_STILL_IMAGE_URL_OVERRIDE, ""),
                 ): str,
                 vol.Optional(
                     CONF_SNAPSHOT_PATH,

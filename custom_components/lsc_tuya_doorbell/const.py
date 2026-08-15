@@ -56,6 +56,12 @@ CONF_RTSP_PATH = "rtsp_path"
 # HomeKit and any detection service all want the stream at the same time.
 # Leave empty to keep the default behaviour.
 CONF_STREAM_URL_OVERRIDE = "stream_url_override"
+# Optional HTTP(S) URL that returns a single JPEG. When set, snapshots are
+# fetched from it instead of being pulled off the RTSP stream with ffmpeg.
+# Restreamers expose such an endpoint (go2rtc: /api/frame.jpeg?src=NAME), and
+# using it avoids spinning up a decode -- or a hardware transcode -- for every
+# still. Leave empty to keep grabbing frames from the stream.
+CONF_STILL_IMAGE_URL_OVERRIDE = "still_image_url_override"
 CONF_SNAPSHOT_PATH = "snapshot_path"
 CONF_FORCE_RECORD_ON = "force_record_on"
 CONF_SNAPSHOT_TRIGGER_DPS = "snapshot_trigger_dps"

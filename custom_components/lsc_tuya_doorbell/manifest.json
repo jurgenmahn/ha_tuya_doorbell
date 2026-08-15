@@ -13,6 +13,6 @@
   "requirements": [
     "cryptography>=41.0.0"
   ],
-  "version": "2.9.0",
+  "version": "2.10.0",
   "homeassistant": "2024.1.0"
 }
