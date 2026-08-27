@@ -221,3 +221,48 @@ def test_unknown_firmware_falls_back_to_the_union() -> None:
     """Documented behaviour, not an accident: the fallback is a guess."""
     assert known_dps_for(None)[110]["name"] == KNOWN_DPS_V5[110]["name"]
     assert known_dps_for("99")[110]["name"] == KNOWN_DPS_V5[110]["name"]
+
+
+# --------------------------------------------------------------------------
+# Which firmware generation a device follows
+# --------------------------------------------------------------------------
+
+
+def test_generation_is_inferred_from_datapoints_only_one_table_has() -> None:
+    """A real v4 doorbell: DP 108 and 150 exist in v4 and nowhere else."""
+    from custom_components.lsc_tuya_doorbell.const import infer_firmware_generation
+
+    assert infer_firmware_generation(
+        [101, 103, 104, 108, 109, 110, 134, 150, 151, 160, 185, 244, 253]
+    ) == "4"
+
+
+def test_shared_datapoints_are_no_evidence_either_way() -> None:
+    from custom_components.lsc_tuya_doorbell.const import (
+        KNOWN_DPS_V4,
+        KNOWN_DPS_V5,
+        infer_firmware_generation,
+    )
+
+    shared = set(KNOWN_DPS_V4) & set(KNOWN_DPS_V5)
+    assert infer_firmware_generation(shared) is None
+
+
+def test_nothing_recognisable_infers_nothing() -> None:
+    from custom_components.lsc_tuya_doorbell.const import infer_firmware_generation
+
+    assert infer_firmware_generation([]) is None
+    assert infer_firmware_generation([7, 8, 9]) is None
+
+
+def test_the_union_is_what_makes_inference_worth_doing() -> None:
+    """Guards the premise: without a generation, v4 devices get v5 names."""
+    from custom_components.lsc_tuya_doorbell.const import (
+        KNOWN_DPS_V4,
+        KNOWN_DPS_V5,
+        known_dps_for,
+    )
+
+    assert KNOWN_DPS_V4[110]["name"] != KNOWN_DPS_V5[110]["name"]
+    assert known_dps_for(None)[110]["name"] == KNOWN_DPS_V5[110]["name"]
+    assert known_dps_for("4")[110]["name"] == KNOWN_DPS_V4[110]["name"]

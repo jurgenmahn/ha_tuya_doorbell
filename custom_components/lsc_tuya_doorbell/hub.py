@@ -35,6 +35,9 @@ from typing import TYPE_CHECKING, Any, Callable, Coroutine
 
 from . import video
 from .const import (
+    KNOWN_DPS_BY_FIRMWARE,
+    known_dps_for,
+    infer_firmware_generation,
     CONF_DEVICE_ID,
     CONF_DEVICE_NAME,
     CONF_FORCE_RECORD_ON,
@@ -939,6 +942,47 @@ class DeviceHub:
 
         return discovered
 
+    async def async_set_firmware_generation(self, generation: str | None) -> int:
+        """Re-label datapoints from the table for a firmware generation.
+
+        Only touches definitions still carrying a name from one of the tables:
+        a name the user changed is theirs and stays. Returns how many changed,
+        so the caller can say what happened instead of claiming success blindly.
+        """
+        if self._profile is None:
+            return 0
+
+        table_names = {
+            entry["name"]
+            for table in KNOWN_DPS_BY_FIRMWARE.values()
+            for entry in table.values()
+        }
+        wanted = known_dps_for(generation) if generation else {}
+
+        changed = 0
+        for dp_id, definition in self._profile.discovered_dps.items():
+            known = wanted.get(dp_id)
+            if not known or definition.name == known["name"]:
+                continue
+            if definition.name not in table_names:
+                _LOGGER.debug(
+                    "Leaving DP %s named %r alone; that name is not from a table "
+                    "and so was chosen deliberately", dp_id, definition.name,
+                )
+                continue
+            _LOGGER.info(
+                "DP %s: %r -> %r (firmware generation %s)",
+                dp_id, definition.name, known["name"], generation,
+            )
+            definition.name = known["name"]
+            definition.dp_type = known["dp_type"]
+            definition.entity_type = known["entity_type"]
+            changed += 1
+
+        self._profile.firmware_version = generation
+        await self._dp_registry.save_profile(self._hass, self._profile)
+        return changed
+
     async def async_apply_discovered_dps(
         self,
         dps: Sequence[DiscoveredDP],
@@ -966,10 +1010,25 @@ class DeviceHub:
         # at a datapoint that no longer exists is dropped, because it would keep
         # a behaviour "on" that nothing can trigger.
         previous = dict(self._profile.roles) if self._profile else {}
+
+        # Without a firmware generation the lookup falls back to the union of
+        # both tables, where v5 wins every disagreement -- which is how a v4
+        # device ends up with two datapoints called "Basic OSD". What the device
+        # reports is enough to tell them apart, so use it.
+        firmware = self._profile.firmware_version if self._profile else None
+        if not firmware:
+            firmware = infer_firmware_generation(definitions)
+            if firmware:
+                _LOGGER.info(
+                    "Device %s looks like firmware generation %s, judged by the "
+                    "datapoints only that generation has",
+                    self._device_id, firmware,
+                )
+
         profile = DeviceProfile(
             device_id=self._device_id,
             discovered_dps=definitions,
-            firmware_version=self._profile.firmware_version if self._profile else None,
+            firmware_version=firmware,
             protocol_version=self._version,
             roles={role: dp for role, dp in previous.items() if dp in definitions},
         )

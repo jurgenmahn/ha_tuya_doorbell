@@ -95,7 +95,9 @@
           "snapshot_settings": "Snapshot settings",
           "dp_list": "Manage datapoints",
           "dp_scan_mode": "Scan for datapoints",
-          "live_capture": "Live capture (find button and motion datapoints)"
+          "live_capture": "Live capture (find button and motion datapoints)",
+          "assign_roles": "Assign roles to datapoints",
+          "firmware_generation": "Datapoint names (firmware generation)"
         }
       },
       "connection": {
@@ -211,11 +213,18 @@
       },
       "assign_roles": {
         "title": "Assign Roles",
-        "description": "{count} datapoint(s) will be saved. Say what they do — the integration acts on roles, not on datapoint numbers, so a role you leave unassigned simply stays off.",
+        "description": "A datapoint without a role is just a sensor: the integration reads roles, not numbers, so this is where the doorbell button becomes the doorbell button.\n\nOnly the doorbell button really matters. Motion is optional, and the record switch is only needed if you use 'force recording on' — it is the switch that gets turned back on when the device turns it off by itself.\n\nDatapoints marked 'already configured' were found earlier; leaving a role pointed at one keeps it as it was.",
         "data": {
           "doorbell_button": "Doorbell button",
           "motion": "Motion detection",
           "record_switch": "Recording switch"
+        }
+      },
+      "firmware_generation": {
+        "title": "Datapoint names",
+        "description": "Different firmware generations of this doorbell use the same datapoint numbers for different things, so the names come from a table per generation. Without knowing which one applies, both tables are used at once and disagreements are resolved in favour of the newer — which is how a device can end up with two switches sharing a name.\n\nCurrently set to: {current}\nBased on the datapoints this device reports: {suggested}\n\nOnly names that came from a table are changed. A name you set yourself is left alone.",
+        "data": {
+          "generation": "Firmware generation"
         }
       }
     },

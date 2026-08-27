@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+
 DOMAIN = "lsc_tuya_doorbell"
 
 # Connection defaults
@@ -368,6 +370,35 @@ AMBIGUOUS_DPS: frozenset[int] = frozenset(
     for dp_id in KNOWN_DPS_V4.keys() & KNOWN_DPS_V5.keys()
     if KNOWN_DPS_V4[dp_id] != KNOWN_DPS_V5[dp_id]
 )
+
+
+def infer_firmware_generation(dp_ids: Iterable[int]) -> str | None:
+    """Work out which known-DP table a device follows, from what it reports.
+
+    Judged only on datapoints that exist in one generation and not the other:
+    those are evidence, while a datapoint both tables share says nothing. If the
+    evidence points both ways, or nowhere, this returns None and the caller
+    keeps guessing rather than pretending to know.
+
+    Worth the trouble because the fallback is the union of both tables, where v5
+    silently wins every disagreement -- which is how a v4 device ends up with two
+    datapoints both called "Basic OSD" and two called "Chime Switch".
+    """
+    reported = set(dp_ids)
+    scores: dict[str, int] = {}
+    for generation, table in KNOWN_DPS_BY_FIRMWARE.items():
+        others: set[int] = set()
+        for other_generation, other_table in KNOWN_DPS_BY_FIRMWARE.items():
+            if other_generation != generation:
+                others |= set(other_table)
+        exclusive = set(table) - others
+        scores[generation] = len(reported & exclusive)
+
+    best = max(scores.values(), default=0)
+    if not best:
+        return None
+    winners = [gen for gen, score in scores.items() if score == best]
+    return winners[0] if len(winners) == 1 else None
 
 
 def known_dps_for(firmware_version: str | None) -> dict[int, dict]:

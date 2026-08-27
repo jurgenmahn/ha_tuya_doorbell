@@ -27,6 +27,8 @@ from homeassistant.helpers.selector import (
 
 from . import video
 from .const import (
+    KNOWN_DPS_BY_FIRMWARE,
+    infer_firmware_generation,
     CONF_DEVICE_ID,
     CONF_DEVICE_NAME,
     CONF_FORCE_RECORD_ON,
@@ -115,6 +117,8 @@ MENU_SNAPSHOTS = "snapshot_settings"
 MENU_DATAPOINTS = "dp_list"
 MENU_SCAN = "dp_scan_mode"
 MENU_CAPTURE = "live_capture"
+MENU_ROLES = "assign_roles"
+MENU_FIRMWARE = "firmware_generation"
 
 # Menu option ids double as step ids: Home Assistant dispatches a chosen menu
 # entry straight to async_step_<option>.
@@ -125,6 +129,8 @@ MENU_OPTIONS: tuple[str, ...] = (
     MENU_DATAPOINTS,
     MENU_SCAN,
     MENU_CAPTURE,
+    MENU_ROLES,
+    MENU_FIRMWARE,
 )
 
 # Which diagnosis wins when several attempts failed for different reasons.
@@ -1355,6 +1361,52 @@ class LscTuyaDoorbellOptionsFlow(OptionsFlow):
             description_placeholders={"count": str(len(discovered))},
         )
 
+
+    async def async_step_firmware_generation(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Choose which datapoint-name table applies to this device.
+
+        The two generations disagree about what several datapoints are called,
+        and without knowing which one applies the integration falls back to the
+        union of both -- where v5 wins every disagreement. That is how a v4
+        device ends up showing two switches both called "Chime Switch".
+        """
+        hub = self._get_hub()
+        if hub is None or hub.profile is None:
+            return self.async_abort(reason="hub_unavailable")
+
+        current = hub.profile.firmware_version
+        suggested = infer_firmware_generation(hub.profile.discovered_dps) or ""
+
+        if user_input is not None:
+            chosen = user_input.get("generation") or None
+            changed = await hub.async_set_firmware_generation(chosen)
+            _LOGGER.info(
+                "Firmware generation set to %s; renamed %d datapoint(s)",
+                chosen or "unknown", changed,
+            )
+            await self.hass.config_entries.async_reload(self._config_entry.entry_id)
+            return self.async_create_entry(title="", data=self._config_entry.options)
+
+        options = {"": "Unknown — use both tables"}
+        options.update({gen: f"Generation {gen}" for gen in sorted(KNOWN_DPS_BY_FIRMWARE)})
+
+        return self.async_show_form(
+            step_id="firmware_generation",
+            data_schema=vol.Schema(
+                {
+                    vol.Optional(
+                        "generation", default=current or suggested or ""
+                    ): vol.In(options),
+                }
+            ),
+            description_placeholders={
+                "current": current or "unknown",
+                "suggested": suggested or "no clear match",
+            },
+        )
+
     # --- Live capture ---
 
     async def async_step_live_capture(
@@ -1465,7 +1517,12 @@ class LscTuyaDoorbellOptionsFlow(OptionsFlow):
     async def async_step_assign_roles(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Say what the chosen datapoints *do*.
+        """Say what the datapoints *do*.
+
+        Reachable straight from the menu as well as at the end of a capture:
+        deciding which datapoint is the button is a decision, not a side effect
+        of discovering datapoints, and changing your mind should not require
+        finding them all over again.
 
         The rest of the integration reads roles, not datapoint numbers, so a
         datapoint without a role is just a sensor: no doorbell, no motion.
