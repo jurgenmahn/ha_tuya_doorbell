@@ -1092,3 +1092,45 @@ def test_relabelling_moves_the_descriptive_fields_too():
     assert v4 and v5, "expected both generations to define DP 109"
     # The premise: the two disagree about whether it carries a status map.
     assert bool(v4.get("value_map")) != bool(v5.get("value_map"))
+
+
+class TestUnverifiedNamesAreWithdrawn:
+    """A name nobody checked is a guess, and the guesses were mostly wrong."""
+
+    @pytest.mark.asyncio
+    async def test_a_guessed_name_is_replaced_by_the_number(self, tmp_path):
+        profile = DeviceProfile(device_id="dev123", firmware_version="4")
+        profile.discovered_dps[110] = DPDefinition(
+            dp_id=110, name="SD Card Status", dp_type=DP_TYPE_INT,
+            entity_type="sensor", value_map={1: "normal"},
+        )
+        hub = make_hub(tmp_path, profile=profile)
+
+        await hub.async_set_firmware_generation("4")
+
+        assert hub.definition_for(110).name == "DP 110"
+        assert hub.definition_for(110).value_map is None
+
+    @pytest.mark.asyncio
+    async def test_a_name_the_user_chose_survives(self, tmp_path):
+        profile = DeviceProfile(device_id="dev123", firmware_version="4")
+        profile.discovered_dps[110] = DPDefinition(
+            dp_id=110, name="Voordeur SD", dp_type=DP_TYPE_INT, entity_type="sensor",
+        )
+        hub = make_hub(tmp_path, profile=profile)
+
+        await hub.async_set_firmware_generation("4")
+
+        assert hub.definition_for(110).name == "Voordeur SD"
+
+    @pytest.mark.asyncio
+    async def test_a_verified_datapoint_is_still_corrected(self, tmp_path):
+        profile = DeviceProfile(device_id="dev123", firmware_version="4")
+        profile.discovered_dps[134] = DPDefinition(
+            dp_id=134, name="Vision Flip", dp_type=DP_TYPE_BOOL, entity_type="switch",
+        )
+        hub = make_hub(tmp_path, profile=profile)
+
+        await hub.async_set_firmware_generation("4")
+
+        assert hub.definition_for(134).name == "Motion Alarm"

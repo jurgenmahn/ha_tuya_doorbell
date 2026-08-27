@@ -963,7 +963,30 @@ class DeviceHub:
         changed = 0
         for dp_id, definition in self._profile.discovered_dps.items():
             known = wanted.get(dp_id)
-            if not known or definition.name == known["name"]:
+
+            if known is None:
+                # Nobody has verified this datapoint. If it is still carrying a
+                # name that came from a table, that name is a guess, and eight
+                # of the nine guesses checked so far were wrong -- so withdraw
+                # it rather than leave the user reading a label for something
+                # their device does not do. A name they chose themselves is not
+                # in the tables and survives.
+                if definition.name in table_names:
+                    _LOGGER.info(
+                        "DP %s: %r withdrawn -- that name has never been "
+                        "verified on any device", dp_id, definition.name,
+                    )
+                    definition.name = f"DP {dp_id}"
+                    definition.options = None
+                    definition.enum_values = None
+                    definition.value_map = None
+                    definition.device_class = None
+                    definition.icon = None
+                    definition.carries_image_url = False
+                    changed += 1
+                continue
+
+            if definition.name == known["name"]:
                 continue
             if definition.name not in table_names:
                 _LOGGER.debug(
