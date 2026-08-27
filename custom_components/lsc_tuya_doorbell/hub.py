@@ -30,7 +30,7 @@ import logging
 from pathlib import Path
 import re
 import time
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Container, Iterable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Callable, Coroutine
 
 from . import video
@@ -252,6 +252,7 @@ def classify_registry_entries(
     device_id: str,
     definitions: Mapping[int, Any],
     entries: Iterable[Any],
+    event_dp_ids: Container[int] = (),
 ) -> tuple[list[str], list[str]]:
     """Split registry entries into ones left behind and ones merely orphaned.
 
@@ -280,8 +281,17 @@ def classify_registry_entries(
             orphaned.append(entry.entity_id)
             continue
 
-        expected = ENTITY_EVENT if is_event else definition.entity_type
-        if entry.domain != expected:
+        if is_event:
+            # An event entity is not stale because its domain is wrong -- it
+            # always says "event" -- but because the datapoint stopped being
+            # one. A datapoint that was flagged as an event, or held a role that
+            # implies one, and no longer does, leaves an entity behind that
+            # nothing will ever fire again.
+            if dp_id not in event_dp_ids:
+                stale.append(entry.entity_id)
+            continue
+
+        if entry.domain != definition.entity_type:
             stale.append(entry.entity_id)
 
     return stale, orphaned
@@ -732,10 +742,13 @@ class DeviceHub:
         from homeassistant.helpers import entity_registry as er
 
         registry = er.async_get(self._hass)
+        from .entity_meta import event_definitions
+
         stale, orphaned = classify_registry_entries(
             self._device_id,
             self._profile.discovered_dps,
             er.async_entries_for_config_entry(registry, self.entry_id),
+            {dp.dp_id for dp in event_definitions(self._profile)},
         )
 
         for entity_id in stale:

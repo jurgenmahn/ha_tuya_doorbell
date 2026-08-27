@@ -1227,7 +1227,7 @@ class TestEntitiesLeftBehindByATypeChange:
         assert stale == []
         assert orphaned == ["sensor.gone"]
 
-    def test_an_event_entity_belongs_to_the_event_domain(self):
+    def test_an_event_entity_survives_while_its_datapoint_fires(self):
         stale, orphaned = hub_module.classify_registry_entries(
             "dev1",
             self._definitions({185: "binary_sensor"}),
@@ -1235,9 +1235,26 @@ class TestEntitiesLeftBehindByATypeChange:
                 self._Entry("event.ring", "dev1_185_event", "event"),
                 self._Entry("binary_sensor.ring", "dev1_185", "binary_sensor"),
             ],
+            event_dp_ids={185},
         )
 
         assert stale == [] and orphaned == []
+
+    def test_an_event_entity_goes_when_its_datapoint_stops_being_an_event(self):
+        """The case a domain check cannot catch: an event entity's domain is
+        always "event", so it looks right while nothing will ever fire it."""
+        stale, orphaned = hub_module.classify_registry_entries(
+            "dev1",
+            self._definitions({255: "switch"}),
+            [
+                self._Entry("event.dp_255", "dev1_255_event", "event"),
+                self._Entry("switch.dp_255", "dev1_255", "switch"),
+            ],
+            event_dp_ids=set(),
+        )
+
+        assert stale == ["event.dp_255"]
+        assert orphaned == []
 
     def test_the_camera_and_connection_sensor_are_left_alone(self):
         stale, orphaned = hub_module.classify_registry_entries(
