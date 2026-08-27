@@ -1,5 +1,7 @@
 # LSC Tuya Doorbell — Home Assistant integration
 
+<img src="icons/logo.png" alt="LSC Tuya Doorbell" width="180">
+
 Local control for LSC Smart Connect and other Tuya-based video doorbells. The
 integration talks to the doorbell over your own network with the Tuya local
 protocol: no cloud account, no polling of Tuya's servers, no data leaving the
