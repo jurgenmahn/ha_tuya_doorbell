@@ -44,6 +44,14 @@ MAX_EVENT_RESET_TIMEOUT = 300
 # What a role implies, used only where the datapoint definition itself is
 # silent. A datapoint without a definition and without a role gets nothing --
 # no device class at all is honest, while a wrong one is not.
+# Roles that describe something happening rather than something being. A
+# datapoint holding one of these is an event by definition -- the role is the
+# statement -- so it gets an event entity whether or not the stored definition
+# says so. Profiles written by older versions have is_event set to False on
+# exactly these datapoints, because the old "add selected datapoints" step
+# rebuilt every definition from scratch and dropped the flag.
+EVENT_ROLES: frozenset[str] = frozenset({ROLE_DOORBELL_BUTTON, ROLE_MOTION})
+
 ROLE_BINARY_DEVICE_CLASS: dict[str, str] = {
     ROLE_DOORBELL_BUTTON: "occupancy",
     ROLE_MOTION: "motion",
@@ -163,16 +171,22 @@ def definitions_for_platform(
 def event_definitions(profile: DeviceProfile | None) -> list[DPDefinition]:
     """Datapoints that fire an event entity, ordered by DP id.
 
-    Both the explicit event entity type and the ``is_event`` flag qualify. A
-    flagged datapoint that also has its own entity keeps it: the event entity
-    carries the moment, the binary sensor carries the state that follows it.
+    Three things qualify: the explicit event entity type, the ``is_event`` flag,
+    and holding an event role. The last one matters for profiles written before
+    roles existed, where the flag was dropped -- without it a doorbell that works
+    perfectly well would get no event entity at all.
+
+    A qualifying datapoint that also has its own entity keeps it: the event
+    entity carries the moment, the binary sensor carries the state that follows.
     """
     if profile is None:
         return []
     return [
         dp_def
-        for _, dp_def in sorted(profile.discovered_dps.items())
-        if dp_def.entity_type == ENTITY_EVENT or dp_def.is_event
+        for dp_id, dp_def in sorted(profile.discovered_dps.items())
+        if dp_def.entity_type == ENTITY_EVENT
+        or dp_def.is_event
+        or profile.role_of(dp_id) in EVENT_ROLES
     ]
 
 

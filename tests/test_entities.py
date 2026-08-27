@@ -348,3 +348,49 @@ class TestKnownDefinitionsCarryTheirMetadata:
         assert definition.icon == "mdi:sd"
         assert definition.carries_image_url is True
         assert apply_value_map(definition, 3) == "abnormal"
+
+
+# --------------------------------------------------------------------------
+# Event entities follow the role, not only the stored flag
+# --------------------------------------------------------------------------
+
+
+def test_an_event_role_produces_an_event_entity_even_without_the_flag() -> None:
+    """Profiles written before roles existed have is_event set to False.
+
+    The old "add selected datapoints" step rebuilt every definition from scratch
+    and dropped the flag, so a doorbell that works fine would otherwise get no
+    event entity at all. The role is the statement; the flag is bookkeeping.
+    """
+    from custom_components.lsc_tuya_doorbell.const import ROLE_DOORBELL_BUTTON
+    from custom_components.lsc_tuya_doorbell.dp_registry import (
+        DeviceProfile,
+        DPDefinition,
+    )
+    from custom_components.lsc_tuya_doorbell.entity_meta import event_definitions
+
+    profile = DeviceProfile(device_id="dev1")
+    profile.discovered_dps[185] = DPDefinition(
+        dp_id=185, name="Doorbell Button", dp_type="raw",
+        entity_type="binary_sensor", is_event=False,
+    )
+    profile.set_role(ROLE_DOORBELL_BUTTON, 185)
+
+    assert [d.dp_id for d in event_definitions(profile)] == [185]
+
+
+def test_a_role_that_is_not_an_event_produces_no_event_entity() -> None:
+    from custom_components.lsc_tuya_doorbell.const import ROLE_RECORD_SWITCH
+    from custom_components.lsc_tuya_doorbell.dp_registry import (
+        DeviceProfile,
+        DPDefinition,
+    )
+    from custom_components.lsc_tuya_doorbell.entity_meta import event_definitions
+
+    profile = DeviceProfile(device_id="dev1")
+    profile.discovered_dps[101] = DPDefinition(
+        dp_id=101, name="Record Switch", dp_type="bool", entity_type="switch",
+    )
+    profile.set_role(ROLE_RECORD_SWITCH, 101)
+
+    assert event_definitions(profile) == []
