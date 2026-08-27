@@ -624,53 +624,65 @@ The log line to look for is `No datapoint claims the doorbell button role`.
 
 ## Known datapoint tables
 
-The tables below are used to *name* datapoints found by a scan, and to propose
-roles. They are never used to decide behaviour. The table is chosen by firmware
-generation, because the generations disagree:
+These tables *name* datapoints a scan finds, and propose nothing else. They
+never decide behaviour -- that comes from the roles you assign. The table is
+picked by firmware generation, because the two disagree about several numbers.
+
+Treat them as suggestions. Nine v4 entries have been checked against a real
+doorbell and eight were wrong, almost always in the same way: the concept was
+real but sat on a different number. The table knew about an image flip and put
+it on 134, where the device actually arms the motion alarm; it knew about an
+indicator light and put it on 104, where the device burns a timestamp into the
+picture. Entries marked ✓ have been verified against hardware.
+
+One of those was worse than a wrong label. DP 101 was listed as the record
+switch and is the indicator light, so "force recording on" would have watched an
+LED and switched it back on forever. That role is no longer seeded from a
+number at all.
+
+If a name here does not match your device, it is the table that is wrong. Run a
+live capture, rename the datapoint, and please open an issue with what you
+found.
 
 **Firmware v4**
 
-| DP | Name | Type | Entity |
-|---|---|---|---|
-| 101 | Record Switch | bool | Switch |
-| 103 | Night Vision | enum | Select (auto/on/off) |
-| 104 | Indicator Light | bool | Switch |
-| 106 | Motion Sensitivity | enum | Select (low/medium/high) |
-| 108 | Basic OSD | enum | Select (off/on) |
-| 109 | SD Storage Info | string | Sensor |
-| 110 | SD Card Status | int | Sensor (status codes mapped) |
-| 115 | Motion Detection | raw | Binary sensor + event |
-| 134 | Vision Flip | bool | Switch |
-| 150 | Chime Switch | bool | Switch |
-| 151 | Recording Mode | enum | Select (event/continuous) |
-| 154 | Device Volume | int 1-10 | Number |
-| 185 | Doorbell Button | raw | Binary sensor + event |
+| DP | Name | Type | Entity | |
+|---|---|---|---|---|
+| 101 | Indicator Light | bool | Switch | ✓ |
+| 103 | Image Flip | bool | Switch | ✓ |
+| 104 | Time Watermark | bool | Switch | ✓ |
+| 106 | Motion Sensitivity | enum | Select (low/medium/high) |  |
+| 108 | IR Night Vision | enum | Select (auto/off/on) | ✓ |
+| 109 | SD Storage Info | string | Sensor |  |
+| 110 | SD Card Status | int | Sensor (status codes mapped) |  |
+| 115 | Motion Detection | raw | Binary sensor + event |  |
+| 134 | Motion Alarm | bool | Switch | ✓ |
+| 150 | Video Recording | bool | Switch | ✓ |
+| 151 | Recording Mode | enum | Select (event/continuous) | ✓ |
+| 154 | DP 154 (number) | int | Number |  |
+| 155 | Chime Pairing | enum | Select (idle/pairing) | ✓ |
+| 160 | Device Volume | int | Number (1-10) | ✓ |
+| 185 | Doorbell Button | raw | Binary sensor + event |  |
 
 **Firmware v5**
 
-| DP | Name | Type | Entity |
-|---|---|---|---|
-| 101 | Record Switch | bool | Switch |
-| 103 | Night Vision | enum | Select (auto/on/off) |
-| 104 | Indicator Light | bool | Switch |
-| 105 | Vision Flip | bool | Switch |
-| 106 | Motion Sensitivity | enum | Select (low/medium/high) |
-| 109 | SD Card Status | int | Sensor (status codes mapped) |
-| 110 | Basic OSD | bool | Switch |
-| 115 | Motion Detection | raw | Binary sensor + event |
-| 134 | Chime Switch | bool | Switch |
-| 135 | Chime Volume | int 0-10 | Number |
-| 139 | Device Volume | int 1-10 | Number |
-| 151 | Recording Mode | enum | Select (event/continuous) |
-| 185 | Doorbell Button | raw | Binary sensor + event |
+| DP | Name | Type | Entity | |
+|---|---|---|---|---|
+| 101 | Record Switch | bool | Switch | ✓ |
+| 103 | Night Vision | enum | Select (auto/on/off) | ✓ |
+| 104 | Indicator Light | bool | Switch | ✓ |
+| 105 | Vision Flip | bool | Switch |  |
+| 106 | Motion Sensitivity | enum | Select (low/medium/high) |  |
+| 109 | SD Card Status | int | Sensor (status codes mapped) |  |
+| 110 | Basic OSD | bool | Switch |  |
+| 115 | Motion Detection | raw | Binary sensor + event |  |
+| 134 | Chime Switch | bool | Switch | ✓ |
+| 135 | Chime Volume | int | Number (0-10) |  |
+| 139 | Device Volume | int | Number (1-10) |  |
+| 151 | Recording Mode | enum | Select (event/continuous) | ✓ |
+| 185 | Doorbell Button | raw | Binary sensor + event |  |
 
-Where the two disagree — DP 109, 110 and 134 — a device whose firmware
-generation is unknown falls back to the union of both tables, in which v5 wins.
-That is a guess, and the only way to be sure is a scan or a capture on your own
-device, which is why an observed value outranks the table during a live capture.
-
-Datapoints not in either table are classified by the type of the values they
-carry, and can be corrected under **Manage datapoints**.
+Neither table is complete, and neither is authoritative.
 
 ## Finding your device ID and local key
 

@@ -291,13 +291,12 @@ KNOWN_DPS_V4: dict[int, dict] = {
         "entity_type": ENTITY_SELECT,
         "options": {"1": "event", "2": "continuous"},
     },
-    154: {
-        "name": "Device Volume",
-        "dp_type": DP_TYPE_INT,
-        "entity_type": ENTITY_NUMBER,
-        "min": 1,
-        "max": 10,
-    },
+    # Claim withdrawn. This was listed as the device volume, and DP 160 is
+    # verified to be that on the same generation -- two volume controls on one
+    # firmware is not credible, and only one of the two was checked. Kept
+    # because the datapoint exists; named so it does not collide with the one
+    # that was measured.
+    154: {"name": "DP 154 (number)", "dp_type": DP_TYPE_INT, "entity_type": ENTITY_NUMBER},
     # No device_class here on purpose: a doorbell is "occupancy" to a binary
     # sensor and "doorbell" to an event entity, so a single string would be
     # wrong on one of the two. The role tables in entity_meta.py pick the right
