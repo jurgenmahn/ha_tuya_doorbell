@@ -758,6 +758,18 @@ custom_components/lsc_tuya_doorbell/
 `protocol/` package import no Home Assistant at runtime, which is what makes them
 testable without a Home Assistant install and without a camera.
 
+## Related projects
+
+- [LSC Doorbell Event Bridge](https://github.com/GiannBart/lsc-doorbell-event-bridge)
+  by [@GiannBart](https://github.com/GiannBart) — receives events through the
+  Tuya Message Service and publishes doorbell presses, motion, snapshots, power
+  mode and battery level over MQTT.
+
+That one goes through the cloud, which is the right trade for a battery-powered
+doorbell: those sleep between events and cannot hold the local connection this
+integration depends on. If your device is wired, or stays reachable on your
+network, staying local is faster and keeps working when the internet does not.
+
 ## Credits
 
 Built by [Jurgen Mahn](https://github.com/jurgenmahn) with
