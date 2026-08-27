@@ -251,3 +251,42 @@ def test_summary_lists_what_was_seen() -> None:
     capture.stop()
 
     assert "DP 185" in capture.summary()
+
+
+def test_stopping_a_capture_records_what_each_datapoint_carried(caplog) -> None:
+    """The values are the evidence; without them the session leaves no trace.
+
+    Working out what an undocumented datapoint is for means knowing what it
+    actually sent, and that only exists in memory while the session runs.
+    """
+    import logging
+
+    connection = FakeConnection()
+    capture = LiveCapture(DPDiscoveryEngine(connection, firmware_version="4"))
+
+    capture.start()
+    connection.push({"244": "0"})
+    connection.push({"244": "1"})
+    with caplog.at_level(logging.INFO):
+        capture.stop()
+
+    line = next(m for m in caplog.messages if "DP 244" in m)
+    assert "'0'" in line and "'1'" in line
+    assert "2 time(s)" in line
+    assert "looks like an event" in line
+
+
+def test_a_datapoint_that_never_changes_is_not_called_an_event(caplog) -> None:
+    import logging
+
+    connection = FakeConnection()
+    capture = LiveCapture(DPDiscoveryEngine(connection, firmware_version="4"))
+
+    capture.start()
+    for _ in range(4):
+        connection.push({"101": True})
+    with caplog.at_level(logging.INFO):
+        capture.stop()
+
+    line = next(m for m in caplog.messages if "DP 101" in m)
+    assert "looks like an event" not in line

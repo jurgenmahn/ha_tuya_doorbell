@@ -395,6 +395,16 @@ class LiveCapture:
             "Live capture stopped after %.0fs: %d datapoint(s) seen",
             self.elapsed, len(self._found),
         )
+        # At info level, because this is the whole point of having run one: what
+        # each datapoint carried is what tells you what it is for, and it is the
+        # only trace that survives the session.
+        for dp in self.found:
+            _LOGGER.info(
+                "Live capture: DP %d (%s) reported %d time(s), value(s): %s%s",
+                dp.dp_id, dp.dp_type, len(dp.observations),
+                ", ".join(repr(v) for v in dp.distinct_values[:6]),
+                " -- looks like an event" if dp.looks_like_an_event else "",
+            )
 
     def _on_update(self, dps: dict) -> None:
         now = time.time()
@@ -411,7 +421,18 @@ class LiveCapture:
                 # the tables do not describe, so what it does outranks what they say.
                 existing = self._engine.classify_dp(dp_id, value, trust_observation=True)
                 self._found[dp_id] = existing
+
+            # Log the first sight of each distinct value. Without this the only
+            # record of what a datapoint actually carried is in memory, and it
+            # goes away when the session ends -- which is precisely the evidence
+            # anyone needs to work out what an unknown datapoint is for.
+            first_time = value not in existing.distinct_values
             existing.record(value, at=now)
+            if first_time:
+                _LOGGER.debug(
+                    "Live capture: DP %d carried %r (%s)",
+                    dp_id, value, existing.dp_type,
+                )
 
     @property
     def running(self) -> bool:
