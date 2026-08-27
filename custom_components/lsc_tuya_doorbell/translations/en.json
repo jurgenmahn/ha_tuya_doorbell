@@ -154,7 +154,7 @@
       },
       "camera_settings": {
         "title": "Camera Settings",
-        "description": "Where the video comes from decides which settings mean anything, so that question comes first and the next screen asks only what applies.\n\nThese cameras get confused by several simultaneous RTSP sessions. Measured on a real doorbell: a snapshot takes 5.86 s on its own, and 15.94 s when a second grab is already holding a session open. Home Assistant's stream, a snapshot, HomeKit and a detection service add up to four connections fast. A restreamer such as go2rtc or Frigate keeps one connection to the doorbell and fans it out — that is the whole reason the option exists.\n\nThe two settings below apply either way.",
+        "description": "Where the video comes from decides which settings mean anything, so that question comes first and the next screen asks only what applies.\n\nThese cameras get confused by several simultaneous RTSP sessions. Measured on a real doorbell: a snapshot takes 5.86 s on its own, and 15.94 s when a second grab is already holding a session open. Home Assistant's stream, a snapshot, HomeKit and a detection service add up to four connections fast. A restreamer such as go2rtc or Frigate keeps one connection to the doorbell and fans it out — that is the whole reason the option exists.\n\nThe two settings below apply either way.\n\n**Submit opens the settings for the source you picked.**",
         "data": {
           "video_source": "Where does the video come from?",
           "snapshot_path": "Snapshot save directory",
@@ -169,7 +169,7 @@
       },
       "snapshot_settings": {
         "title": "Snapshot Settings",
-        "description": "How a picture is produced when the doorbell fires. The four modes read different settings, so the mode comes first and the next screen asks only what this mode uses.\n\nMeasured on a real doorbell:\n- ffmpeg grab straight from the camera: 5.86 s\n- the same grab with a second one already running: 15.94 s\n- go2rtc still image, source already warm: 1.82 – 3.09 s\n- a continuous ffmpeg writing a rolling JPEG: 1.00 s, flat\n\nThe delay is not the network. The keyframe is decoded after about a second and ffmpeg then spends five to six more working out what the stream contains; no flag shortens that, so anything that starts a process per press pays it every time.",
+        "description": "How a picture is produced when the doorbell fires. The four modes read different settings, so the mode comes first and the next screen asks only what this mode uses.\n\nMeasured on a real doorbell:\n- ffmpeg grab straight from the camera: 5.86 s\n- the same grab with a second one already running: 15.94 s\n- go2rtc still image, source already warm: 1.82 – 3.09 s\n- a continuous ffmpeg writing a rolling JPEG: 1.00 s, flat\n\nThe delay is not the network. The keyframe is decoded after about a second and ffmpeg then spends five to six more working out what the stream contains; no flag shortens that, so anything that starts a process per press pays it every time.\n\n**Submit opens the settings this mode uses.**",
         "data": {
           "snapshot_mode": "Snapshot mode",
           "back": "Back to the options menu (nothing on this screen is saved)"
