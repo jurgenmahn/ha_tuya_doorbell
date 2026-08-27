@@ -199,9 +199,9 @@
       },
       "dp_scan_results": {
         "title": "Scan Results",
-        "description": "Found {count} datapoint(s). Pick the ones you want; only these are written to the device profile, with everything the scan learned about them.",
+        "description": "Found {count} datapoint(s). Tick the ones to add, or to refresh with what this scan learned about them.\n\nDatapoints already in the profile stay whether you tick them or not — unticking one does not remove it. To remove a datapoint, use **Manage datapoints** in the options menu.",
         "data": {
-          "selected_dps": "Datapoints to keep",
+          "selected_dps": "Datapoints to add or refresh",
           "back": "Back to the options menu (nothing on this screen is saved)"
         }
       },

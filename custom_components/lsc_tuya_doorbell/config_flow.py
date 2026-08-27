@@ -227,7 +227,7 @@ LIVE_CAPTURE_TICK_SECONDS = 2.0
 #: counting after something has actually arrived: someone who opened the
 #: capture and is still walking to the front door has reported nothing yet, and
 #: cutting them off would be exactly the wrong moment.
-LIVE_CAPTURE_IDLE_SECONDS = 20.0
+LIVE_CAPTURE_IDLE_SECONDS = 120.0
 
 #: And stop regardless after this long, so a forgotten session does not sit on
 #: the connection forever.

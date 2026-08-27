@@ -290,3 +290,30 @@ def test_a_datapoint_that_never_changes_is_not_called_an_event(caplog) -> None:
 
     line = next(m for m in caplog.messages if "DP 101" in m)
     assert "looks like an event" not in line
+
+
+def test_the_summary_says_when_each_datapoint_first_reported(caplog) -> None:
+    """Two datapoints firing on one button press are told apart by order.
+
+    On this doorbell both 185 and 244 fire when the button is pressed, but 185
+    carries a reference to a photograph the device has to upload first. Which
+    one arrived first is the whole question, and a summary without times cannot
+    answer it.
+    """
+    import logging
+
+    connection = FakeConnection()
+    capture = LiveCapture(DPDiscoveryEngine(connection, firmware_version="4"))
+
+    capture.start()
+    connection.push({"244": "0"})
+    connection.push({"185": "payload"})
+    with caplog.at_level(logging.INFO):
+        capture.stop()
+
+    lines = {m.split()[3]: m for m in caplog.messages if "first seen" in m}
+    assert "244" in lines and "185" in lines
+    for line in lines.values():
+        assert "first seen" in line
+        # HH:MM:SS.mmm -- milliseconds matter here; these arrive seconds apart
+        assert "." in line.split("first seen ")[1][:13]

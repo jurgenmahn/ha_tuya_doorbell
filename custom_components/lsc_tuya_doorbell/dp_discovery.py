@@ -399,9 +399,21 @@ class LiveCapture:
         # each datapoint carried is what tells you what it is for, and it is the
         # only trace that survives the session.
         for dp in self.found:
+            # The time of the first sighting is what makes the summary useful for
+            # more than naming things: two datapoints that both fire on a button
+            # press are only distinguishable by which one arrived first, and the
+            # one that does not have to upload a photograph first is the one
+            # worth triggering on.
+            first = (
+                time.strftime("%H:%M:%S", time.localtime(dp.observations[0].at))
+                + f".{int(dp.observations[0].at % 1 * 1000):03d}"
+                if dp.observations
+                else "never"
+            )
             _LOGGER.info(
-                "Live capture: DP %d (%s) reported %d time(s), value(s): %s%s",
-                dp.dp_id, dp.dp_type, len(dp.observations),
+                "Live capture: DP %d (%s) first seen %s, reported %d time(s), "
+                "value(s): %s%s",
+                dp.dp_id, dp.dp_type, first, len(dp.observations),
                 ", ".join(repr(v) for v in dp.distinct_values[:6]),
                 " -- looks like an event" if dp.looks_like_an_event else "",
             )

@@ -256,7 +256,15 @@ KNOWN_DPS_V4: dict[int, dict] = {
         "is_event": True,
         "carries_image_url": True,
     },
-    134: {"name": "Vision Flip", "dp_type": DP_TYPE_BOOL, "entity_type": ENTITY_SWITCH},
+    # Verified on hardware 2026-08-27: starts chime pairing. Reported as an
+    # enum carrying "1" then "0", so it behaves as an action rather than a
+    # setting that stays put.
+    155: {"name": "Chime Pairing", "dp_type": DP_TYPE_ENUM, "entity_type": ENTITY_SELECT,
+          "options": {"0": "idle", "1": "pairing"}},
+    # Verified on hardware 2026-08-27: this toggles the motion detection alarm,
+    # not the image flip the table claimed. Both generations had it wrong, which
+    # is the argument for the live capture in one line.
+    134: {"name": "Motion Alarm", "dp_type": DP_TYPE_BOOL, "entity_type": ENTITY_SWITCH},
     150: {"name": "Chime Switch", "dp_type": DP_TYPE_BOOL, "entity_type": ENTITY_SWITCH},
     151: {
         "name": "Recording Mode",
