@@ -246,24 +246,19 @@
           "onvif_password": "ONVIF/RTSP password",
           "rtsp_port": "RTSP port",
           "rtsp_path": "RTSP stream path",
-          "still_image_url_override": "Still image URL (optional)",
           "back": "Back to the options menu (nothing from these two screens is saved)"
         },
-        "data_description": {
-          "still_image_url_override": "An HTTP URL that returns a single JPEG, used for snapshots instead of grabbing a frame off the RTSP stream. Leave empty unless the camera offers one."
-        }
+        "data_description": {}
       },
       "camera_restream": {
         "title": "Camera: Through a Restreamer",
         "description": "One connection to the doorbell, fanned out to everything else. Point both fields at the restreamer, not at the camera — in 2.x the snapshot code rebuilt its own URL from host, port and path, which is how a fourth session ended up on the camera even with an override set.\n\nThe RTSP port and path are not used while this is in place.",
         "data": {
           "stream_url_override": "Stream URL",
-          "still_image_url_override": "Still image URL (optional)",
           "back": "Back to the options menu (nothing from these two screens is saved)"
         },
         "data_description": {
-          "stream_url_override": "The restreamer's RTSP URL, for example rtsp://192.168.1.10:8554/doorbell.",
-          "still_image_url_override": "An HTTP URL returning a single JPEG. For go2rtc that is http://192.168.1.10:1984/api/frame.jpeg?src=doorbell — measured at 1.82 – 3.09 s against 5.86 s for an ffmpeg grab. Leave empty to grab a frame off the stream instead."
+          "stream_url_override": "The restreamer's RTSP URL, for example rtsp://192.168.1.10:8554/doorbell."
         }
       },
       "snapshot_options": {
@@ -274,13 +269,15 @@
           "snapshot_buffer_path": "Buffer directory",
           "snapshot_buffer_seconds": "Buffer length",
           "snapshot_delay_ms": "Look back by",
-          "back": "Back to the options menu (nothing from these two screens is saved)"
+          "back": "Back to the options menu (nothing from these two screens is saved)",
+          "still_image_url_override": "Still image URL"
         },
         "data_description": {
           "snapshot_trigger_dps": "Only datapoints this device actually reports are listed. Run a scan or a live capture to fill this list.",
           "snapshot_buffer_path": "Put it on tmpfs (/dev/shm) so the segments never touch persistent storage; see above for the size it needs.",
           "snapshot_buffer_seconds": "How much video is kept. Longer means more memory.",
-          "snapshot_delay_ms": "The doorbell reports a press seconds after it happened, so a picture of 'now' shows the visitor already walking away. This takes the picture that many milliseconds earlier. Start around 3000 ms and adjust."
+          "snapshot_delay_ms": "The doorbell reports a press seconds after it happened, so a picture of 'now' shows the visitor already walking away. This takes the picture that many milliseconds earlier. Start around 3000 ms and adjust.",
+          "still_image_url_override": "Where to fetch a single picture, if something on your network can hand one over — go2rtc's /api/frame.jpeg, Frigate's latest.jpg, or a camera that serves stills over HTTP. When this is set it is always tried first, in every mode, because it costs one request. Leave it empty to take pictures from the video stream instead."
         }
       }
     },
@@ -340,7 +337,7 @@
     "snapshot_mode": {
       "options": {
         "off": "Off — no snapshots",
-        "on_demand": "On demand — one ffmpeg per press, about 5.9 s (default)",
+        "on_demand": "On demand — fetch a picture when the doorbell fires (default)",
         "warm": "Warm — a rolling still kept ready, about 1.0 s",
         "buffer": "Buffer — recent video kept on tmpfs, the only mode that can look back"
       }

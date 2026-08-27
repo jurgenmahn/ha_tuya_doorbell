@@ -210,11 +210,12 @@ def snapshot_fields_for(mode: str) -> tuple[str, ...]:
     if mode == video.MODE_BUFFER:
         return (
             CONF_SNAPSHOT_TRIGGER_DPS,
+            CONF_STILL_IMAGE_URL_OVERRIDE,
             CONF_SNAPSHOT_BUFFER_PATH,
             CONF_SNAPSHOT_BUFFER_SECONDS,
             CONF_SNAPSHOT_DELAY_MS,
         )
-    return (CONF_SNAPSHOT_TRIGGER_DPS,)
+    return (CONF_SNAPSHOT_TRIGGER_DPS, CONF_STILL_IMAGE_URL_OVERRIDE)
 
 
 # --- Live capture pacing ---------------------------------------------------
@@ -1211,9 +1212,6 @@ class LscTuyaDoorbellOptionsFlow(OptionsFlow):
             new_options[CONF_RTSP_PATH] = user_input.get(
                 CONF_RTSP_PATH, DEFAULT_RTSP_PATH
             )
-            new_options[CONF_STILL_IMAGE_URL_OVERRIDE] = user_input.get(
-                CONF_STILL_IMAGE_URL_OVERRIDE, ""
-            ).strip()
             # Choosing this route is choosing against the other one. Leaving a
             # stream override in place would keep it winning over everything
             # just entered here, which is the confusion this split exists for.
@@ -1245,10 +1243,6 @@ class LscTuyaDoorbellOptionsFlow(OptionsFlow):
                             CONF_RTSP_PATH,
                             default=opts.get(CONF_RTSP_PATH, DEFAULT_RTSP_PATH),
                         ): str,
-                        vol.Optional(
-                            CONF_STILL_IMAGE_URL_OVERRIDE,
-                            default=opts.get(CONF_STILL_IMAGE_URL_OVERRIDE, ""),
-                        ): str,
                     }
                 )
             ),
@@ -1275,9 +1269,6 @@ class LscTuyaDoorbellOptionsFlow(OptionsFlow):
                 new_options = dict(opts)
                 new_options.update(self._pending_camera)
                 new_options[CONF_STREAM_URL_OVERRIDE] = stream_url
-                new_options[CONF_STILL_IMAGE_URL_OVERRIDE] = user_input.get(
-                    CONF_STILL_IMAGE_URL_OVERRIDE, ""
-                ).strip()
                 return await self._async_save_options(new_options)
 
         return self.async_show_form(
@@ -1290,13 +1281,6 @@ class LscTuyaDoorbellOptionsFlow(OptionsFlow):
                             default=(user_input or {}).get(
                                 CONF_STREAM_URL_OVERRIDE,
                                 opts.get(CONF_STREAM_URL_OVERRIDE, ""),
-                            ),
-                        ): str,
-                        vol.Optional(
-                            CONF_STILL_IMAGE_URL_OVERRIDE,
-                            default=(user_input or {}).get(
-                                CONF_STILL_IMAGE_URL_OVERRIDE,
-                                opts.get(CONF_STILL_IMAGE_URL_OVERRIDE, ""),
                             ),
                         ): str,
                     }
@@ -1376,6 +1360,11 @@ class LscTuyaDoorbellOptionsFlow(OptionsFlow):
                 new_options[CONF_SNAPSHOT_TRIGGER_DPS] = user_input.get(
                     CONF_SNAPSHOT_TRIGGER_DPS, []
                 )
+            if CONF_STILL_IMAGE_URL_OVERRIDE in fields:
+                new_options[CONF_STILL_IMAGE_URL_OVERRIDE] = user_input.get(
+                    CONF_STILL_IMAGE_URL_OVERRIDE, ""
+                ).strip()
+
             if CONF_SNAPSHOT_BUFFER_PATH in fields:
                 new_options[CONF_SNAPSHOT_BUFFER_PATH] = user_input[
                     CONF_SNAPSHOT_BUFFER_PATH
@@ -1396,6 +1385,13 @@ class LscTuyaDoorbellOptionsFlow(OptionsFlow):
                     default=self._current_triggers(trigger_options),
                 )
             ] = cv.multi_select(trigger_options)
+        if CONF_STILL_IMAGE_URL_OVERRIDE in fields:
+            schema[
+                vol.Optional(
+                    CONF_STILL_IMAGE_URL_OVERRIDE,
+                    default=opts.get(CONF_STILL_IMAGE_URL_OVERRIDE, ""),
+                )
+            ] = str
         if CONF_SNAPSHOT_BUFFER_PATH in fields:
             schema[
                 vol.Required(

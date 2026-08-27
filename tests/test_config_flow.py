@@ -929,7 +929,6 @@ class TestVideoSourceSplit:
             "onvif_password",
             "rtsp_port",
             "rtsp_path",
-            "still_image_url_override",
             "back",
         }
 
@@ -941,7 +940,6 @@ class TestVideoSourceSplit:
         assert result["step_id"] == "camera_restream"
         assert _fields(result) == {
             "stream_url_override",
-            "still_image_url_override",
             "back",
         }
 
@@ -988,13 +986,17 @@ class TestSnapshotModeSplit:
         assert config_flow.snapshot_fields_for("off") == ()
 
     @pytest.mark.parametrize("mode", ["on_demand", "warm"])
-    def test_the_simple_modes_only_need_their_triggers(self, mode):
-        assert config_flow.snapshot_fields_for(mode) == ("snapshot_trigger_dps",)
+    def test_the_simple_modes_ask_for_triggers_and_a_still_url(self, mode):
+        assert set(config_flow.snapshot_fields_for(mode)) == {
+            "snapshot_trigger_dps",
+            "still_image_url_override",
+        }
 
     def test_only_buffer_mode_has_a_buffer(self):
         fields = config_flow.snapshot_fields_for("buffer")
         assert set(fields) == {
             "snapshot_trigger_dps",
+            "still_image_url_override",
             "snapshot_buffer_path",
             "snapshot_buffer_seconds",
             "snapshot_delay_ms",
@@ -1030,7 +1032,11 @@ class TestSnapshotModeSplit:
         result = await flow.async_step_snapshot_settings({"snapshot_mode": "warm"})
 
         assert result["step_id"] == "snapshot_options"
-        assert _fields(result) == {"snapshot_trigger_dps", "back"}
+        assert _fields(result) == {
+            "snapshot_trigger_dps",
+            "still_image_url_override",
+            "back",
+        }
 
     @pytest.mark.asyncio
     async def test_buffer_asks_for_everything_a_buffer_needs(self):
@@ -1039,6 +1045,7 @@ class TestSnapshotModeSplit:
 
         assert _fields(result) == {
             "snapshot_trigger_dps",
+            "still_image_url_override",
             "snapshot_buffer_path",
             "snapshot_buffer_seconds",
             "snapshot_delay_ms",
@@ -1049,7 +1056,9 @@ class TestSnapshotModeSplit:
     async def test_a_device_without_datapoints_is_not_offered_a_trigger_list(self):
         flow = _options_flow({}, hub=_FakeHub(_OptionsProfile({})))
         result = await flow.async_step_snapshot_settings({"snapshot_mode": "warm"})
-        assert _fields(result) == {"back"}
+        # No datapoints means no trigger list, but a still image URL is still
+        # a sensible thing to configure.
+        assert _fields(result) == {"still_image_url_override", "back"}
 
     @pytest.mark.asyncio
     async def test_the_follow_up_saves_the_mode_it_was_reached_with(self):
@@ -1357,3 +1366,22 @@ class TestSplitTranslations:
         text = strings["options"]["progress"]["live_capture"]
         assert "Close this dialog" in text
         assert "nothing is lost" in text
+
+
+class TestTheStillUrlIsASnapshotSetting:
+    """It configures how a picture is taken, not how video is streamed."""
+
+    @pytest.mark.asyncio
+    async def test_the_camera_pages_do_not_ask_for_it(self):
+        for source, step in (("direct", "camera_direct"), ("restream", "camera_restream")):
+            flow = _options_flow({})
+            result = await flow.async_step_camera_settings({"video_source": source})
+            assert result["step_id"] == step
+            assert "still_image_url_override" not in _fields(result)
+
+    @pytest.mark.parametrize("mode", ["on_demand", "warm", "buffer"])
+    def test_every_mode_that_takes_a_picture_asks_for_it(self, mode):
+        assert "still_image_url_override" in config_flow.snapshot_fields_for(mode)
+
+    def test_the_mode_that_takes_no_pictures_does_not(self):
+        assert config_flow.snapshot_fields_for("off") == ()
