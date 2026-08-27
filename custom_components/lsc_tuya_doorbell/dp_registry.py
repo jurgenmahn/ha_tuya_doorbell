@@ -53,6 +53,14 @@ class DPDefinition:
     device_class: str | None = None
     value_map: dict[int, str] | None = None
     carries_image_url: bool = False
+    # Whether a person typed this name. Nothing automatic may overwrite it.
+    #
+    # This used to be inferred -- "is the name one the tables use?" -- which
+    # quietly means a user who names a datapoint after what it actually does,
+    # using the same words the tables happen to use, loses that name the next
+    # time the firmware generation is saved. Guessing from a string is the
+    # class of bug this whole profile exists to end.
+    user_named: bool = False
 
 
 @dataclass

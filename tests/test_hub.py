@@ -1134,3 +1134,53 @@ class TestUnverifiedNamesAreWithdrawn:
         await hub.async_set_firmware_generation("4")
 
         assert hub.definition_for(134).name == "Motion Alarm"
+
+
+class TestHandChosenNamesAreNeverOverwritten:
+    """Provenance is recorded, not inferred from what the name looks like."""
+
+    @pytest.mark.asyncio
+    async def test_a_hand_typed_name_survives_even_if_a_table_uses_it(self, tmp_path):
+        """The case the old heuristic got wrong.
+
+        Someone who names a datapoint after what it actually does, using words
+        the tables happen to use too, would have lost that name on the next
+        save. Whether a name came from a person is a fact worth storing, not
+        something to guess from a string.
+        """
+        profile = DeviceProfile(device_id="dev123", firmware_version="4")
+        profile.discovered_dps[244] = DPDefinition(
+            dp_id=244, name="DP 244", dp_type=DP_TYPE_INT, entity_type="sensor",
+        )
+        hub = make_hub(tmp_path, profile=profile)
+
+        await hub.update_dp(244, name="Motion Alarm")
+        await hub.async_set_firmware_generation("4")
+
+        assert hub.definition_for(244).name == "Motion Alarm"
+
+    @pytest.mark.asyncio
+    async def test_renaming_records_that_a_person_did_it(self, tmp_path):
+        profile = DeviceProfile(device_id="dev123", firmware_version="4")
+        profile.discovered_dps[110] = DPDefinition(
+            dp_id=110, name="SD Card Status", dp_type=DP_TYPE_INT, entity_type="sensor",
+        )
+        hub = make_hub(tmp_path, profile=profile)
+
+        assert hub.definition_for(110).user_named is False
+        await hub.update_dp(110, name="Voordeur SD")
+        assert hub.definition_for(110).user_named is True
+
+    @pytest.mark.asyncio
+    async def test_saving_the_same_name_is_not_a_rename(self, tmp_path):
+        profile = DeviceProfile(device_id="dev123", firmware_version="4")
+        profile.discovered_dps[110] = DPDefinition(
+            dp_id=110, name="SD Card Status", dp_type=DP_TYPE_INT, entity_type="sensor",
+        )
+        hub = make_hub(tmp_path, profile=profile)
+
+        await hub.update_dp(110, name="SD Card Status", entity_type="sensor")
+
+        assert hub.definition_for(110).user_named is False
+        await hub.async_set_firmware_generation("4")
+        assert hub.definition_for(110).name == "DP 110"

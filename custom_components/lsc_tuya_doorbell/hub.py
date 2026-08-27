@@ -962,6 +962,13 @@ class DeviceHub:
 
         changed = 0
         for dp_id, definition in self._profile.discovered_dps.items():
+            if definition.user_named:
+                _LOGGER.debug(
+                    "Leaving DP %s named %r alone; that name was chosen by hand",
+                    dp_id, definition.name,
+                )
+                continue
+
             known = wanted.get(dp_id)
 
             if known is None:
@@ -1124,6 +1131,8 @@ class DeviceHub:
             is_event=is_event,
             icon=icon,
             device_class=device_class,
+            # Added by hand, named by hand. Nothing automatic may rewrite it.
+            user_named=True,
         )
         self._profile.discovered_dps[dp_id] = definition
         await self._dp_registry.save_profile(self._hass, self._profile)
@@ -1155,8 +1164,9 @@ class DeviceHub:
             return
 
         definition = self._profile.discovered_dps[dp_id]
-        if name is not None:
+        if name is not None and name != definition.name:
             definition.name = name
+            definition.user_named = True
         if entity_type is not None:
             definition.entity_type = entity_type
         await self._dp_registry.save_profile(self._hass, self._profile)
