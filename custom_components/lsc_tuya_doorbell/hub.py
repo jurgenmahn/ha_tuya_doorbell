@@ -30,11 +30,12 @@ import logging
 from pathlib import Path
 import re
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Callable, Coroutine
 
 from . import video
 from .const import (
+    ENTITY_EVENT,
     KNOWN_DPS_BY_FIRMWARE,
     known_dps_for,
     verified_dps_for,
@@ -245,6 +246,45 @@ def snapshot_filename(slug: str, moment: float) -> str:
 def device_name_slug(device_name: str) -> str:
     """Slugify a device name for the deprecated per-device event names."""
     return _SLUG_PATTERN.sub("_", device_name.lower()).strip("_")
+
+
+def classify_registry_entries(
+    device_id: str,
+    definitions: Mapping[int, Any],
+    entries: Iterable[Any],
+) -> tuple[list[str], list[str]]:
+    """Split registry entries into ones left behind and ones merely orphaned.
+
+    A unique_id is only unique within a domain, so a datapoint that used to be a
+    switch and is now a number keeps both entries: the switch nobody updates any
+    more, and the number that works. Home Assistant cannot notice, because from
+    its side those are two unrelated entities that happen to share an id.
+
+    Returns (stale, orphaned). Stale means the datapoint still exists and lives
+    in another domain now -- provably dead, safe to remove. Orphaned means the
+    profile no longer has that datapoint at all, which is reversible and takes
+    its history with it, so those are reported rather than deleted.
+    """
+    stale: list[str] = []
+    orphaned: list[str] = []
+    pattern = re.compile(rf"{re.escape(device_id)}_(\d+)(_event)?$")
+
+    for entry in entries:
+        match = pattern.fullmatch(entry.unique_id)
+        if match is None:
+            continue  # the camera and the connection sensor carry their own ids
+        dp_id, is_event = int(match.group(1)), bool(match.group(2))
+
+        definition = definitions.get(dp_id)
+        if definition is None:
+            orphaned.append(entry.entity_id)
+            continue
+
+        expected = ENTITY_EVENT if is_event else definition.entity_type
+        if entry.domain != expected:
+            stale.append(entry.entity_id)
+
+    return stale, orphaned
 
 
 class DeviceHub:
@@ -682,6 +722,38 @@ class DeviceHub:
 
     # --- Lifecycle ---
 
+    def _remove_entities_left_behind_by_a_type_change(self) -> int:
+        """Delete registry entries a datapoint left behind when its kind changed."""
+        if self._profile is None:
+            return 0
+
+        # Imported here rather than at module scope so this file stays importable
+        # without Home Assistant, which is what makes it testable.
+        from homeassistant.helpers import entity_registry as er
+
+        registry = er.async_get(self._hass)
+        stale, orphaned = classify_registry_entries(
+            self._device_id,
+            self._profile.discovered_dps,
+            er.async_entries_for_config_entry(registry, self.entry_id),
+        )
+
+        for entity_id in stale:
+            _LOGGER.info(
+                "Removing %s: its datapoint is a different kind of entity now, "
+                "and this entry was left behind when it changed", entity_id,
+            )
+            registry.async_remove(entity_id)
+
+        if orphaned:
+            _LOGGER.warning(
+                "%d entit(ies) belong to datapoints no longer in the profile and "
+                "will stay unavailable: %s. Delete them from the entity registry "
+                "if you do not want them back.",
+                len(orphaned), ", ".join(sorted(orphaned)),
+            )
+        return len(stale)
+
     async def async_setup(self) -> bool:
         """Set up the device hub: connect, load profile, start heartbeat."""
         _LOGGER.info(
@@ -702,6 +774,7 @@ class DeviceHub:
             )
 
         self._enrich_profile_from_known_table()
+        self._remove_entities_left_behind_by_a_type_change()
         self._review_roles()
 
         # The provider is rebuilt here because the stream URL depends on the
@@ -993,7 +1066,25 @@ class DeviceHub:
                     changed += 1
                 continue
 
-            if definition.name == known["name"]:
+            options = known.get("options")
+            fresh = {
+                "name": known["name"],
+                "dp_type": known["dp_type"],
+                "entity_type": known["entity_type"],
+                "options": options,
+                "enum_values": list(options.values()) if options else None,
+                "min_value": known.get("min"),
+                "max_value": known.get("max"),
+                "value_map": known.get("value_map"),
+                "device_class": known.get("device_class"),
+                "icon": known.get("icon"),
+                "carries_image_url": known.get("carries_image_url", False),
+            }
+            # Comparing every field rather than just the name: a datapoint whose
+            # name already matched kept whatever bounds it was stored with, so a
+            # volume control the table describes as 1-10 stayed on the 0-100 the
+            # number platform falls back to.
+            if all(getattr(definition, field) == value for field, value in fresh.items()):
                 continue
             if definition.name not in table_names:
                 _LOGGER.debug(
@@ -1005,22 +1096,12 @@ class DeviceHub:
                 "DP %s: %r -> %r (firmware generation %s)",
                 dp_id, definition.name, known["name"], generation,
             )
-            definition.name = known["name"]
-            definition.dp_type = known["dp_type"]
-            definition.entity_type = known["entity_type"]
+            for field, value in fresh.items():
+                setattr(definition, field, value)
             # Everything descriptive has to move with it. Leaving these behind
             # gave DP 109 the SD card status codes it carried under its previous
             # meaning, while it is a plain string sensor in this generation --
             # the numbers were gone but the labels for them were not.
-            options = known.get("options")
-            definition.options = options
-            definition.enum_values = list(options.values()) if options else None
-            definition.min_value = known.get("min")
-            definition.max_value = known.get("max")
-            definition.value_map = known.get("value_map")
-            definition.device_class = known.get("device_class")
-            definition.icon = known.get("icon")
-            definition.carries_image_url = known.get("carries_image_url", False)
             changed += 1
 
         self._profile.firmware_version = generation

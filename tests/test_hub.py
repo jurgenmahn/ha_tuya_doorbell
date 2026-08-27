@@ -1184,3 +1184,78 @@ class TestHandChosenNamesAreNeverOverwritten:
         assert hub.definition_for(110).user_named is False
         await hub.async_set_firmware_generation("4")
         assert hub.definition_for(110).name == "DP 110"
+
+
+class TestEntitiesLeftBehindByATypeChange:
+    """A unique_id is unique per domain, so changing a datapoint's kind leaves
+    the old entity in place beside the new one, and Home Assistant cannot tell
+    they are the same thing."""
+
+    class _Entry:
+        def __init__(self, entity_id, unique_id, domain):
+            self.entity_id = entity_id
+            self.unique_id = unique_id
+            self.domain = domain
+
+    def _definitions(self, kinds):
+        return {
+            dp_id: DPDefinition(
+                dp_id=dp_id, name=f"DP {dp_id}", dp_type=DP_TYPE_INT, entity_type=kind
+            )
+            for dp_id, kind in kinds.items()
+        }
+
+    def test_the_entity_in_the_wrong_domain_is_stale(self):
+        stale, orphaned = hub_module.classify_registry_entries(
+            "dev1",
+            self._definitions({160: "number"}),
+            [
+                self._Entry("switch.volume", "dev1_160", "switch"),
+                self._Entry("number.volume", "dev1_160", "number"),
+            ],
+        )
+
+        assert stale == ["switch.volume"]
+        assert orphaned == []
+
+    def test_a_datapoint_no_longer_in_the_profile_is_reported_not_removed(self):
+        """Removing a datapoint is reversible; deleting its history is not."""
+        stale, orphaned = hub_module.classify_registry_entries(
+            "dev1", {}, [self._Entry("sensor.gone", "dev1_199", "sensor")]
+        )
+
+        assert stale == []
+        assert orphaned == ["sensor.gone"]
+
+    def test_an_event_entity_belongs_to_the_event_domain(self):
+        stale, orphaned = hub_module.classify_registry_entries(
+            "dev1",
+            self._definitions({185: "binary_sensor"}),
+            [
+                self._Entry("event.ring", "dev1_185_event", "event"),
+                self._Entry("binary_sensor.ring", "dev1_185", "binary_sensor"),
+            ],
+        )
+
+        assert stale == [] and orphaned == []
+
+    def test_the_camera_and_connection_sensor_are_left_alone(self):
+        stale, orphaned = hub_module.classify_registry_entries(
+            "dev1",
+            self._definitions({185: "binary_sensor"}),
+            [
+                self._Entry("camera.doorbell", "dev1_camera", "camera"),
+                self._Entry("binary_sensor.connected", "dev1_connected", "binary_sensor"),
+            ],
+        )
+
+        assert stale == [] and orphaned == []
+
+    def test_another_devices_entities_are_not_touched(self):
+        stale, orphaned = hub_module.classify_registry_entries(
+            "dev1",
+            self._definitions({160: "number"}),
+            [self._Entry("switch.other", "dev2_160", "switch")],
+        )
+
+        assert stale == [] and orphaned == []
