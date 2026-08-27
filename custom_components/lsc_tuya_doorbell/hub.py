@@ -977,6 +977,19 @@ class DeviceHub:
             definition.name = known["name"]
             definition.dp_type = known["dp_type"]
             definition.entity_type = known["entity_type"]
+            # Everything descriptive has to move with it. Leaving these behind
+            # gave DP 109 the SD card status codes it carried under its previous
+            # meaning, while it is a plain string sensor in this generation --
+            # the numbers were gone but the labels for them were not.
+            options = known.get("options")
+            definition.options = options
+            definition.enum_values = list(options.values()) if options else None
+            definition.min_value = known.get("min")
+            definition.max_value = known.get("max")
+            definition.value_map = known.get("value_map")
+            definition.device_class = known.get("device_class")
+            definition.icon = known.get("icon")
+            definition.carries_image_url = known.get("carries_image_url", False)
             changed += 1
 
         self._profile.firmware_version = generation

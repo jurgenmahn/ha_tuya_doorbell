@@ -1074,3 +1074,16 @@ class TestProfileEnrichment:
         hub._enrich_profile_from_known_table()
 
         assert hub.definition_for(110).value_map is None
+
+
+def test_relabelling_moves_the_descriptive_fields_too():
+    """Found on a real profile: DP 109 kept the SD card status codes it carried
+    under its previous meaning while being a plain string sensor in the
+    generation actually in use. The numbers were gone; the labels for them were
+    not."""
+    from custom_components.lsc_tuya_doorbell.const import KNOWN_DPS_V4, KNOWN_DPS_V5
+
+    v4, v5 = KNOWN_DPS_V4.get(109), KNOWN_DPS_V5.get(109)
+    assert v4 and v5, "expected both generations to define DP 109"
+    # The premise: the two disagree about whether it carries a status map.
+    assert bool(v4.get("value_map")) != bool(v5.get("value_map"))

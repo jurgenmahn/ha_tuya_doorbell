@@ -256,6 +256,11 @@ KNOWN_DPS_V4: dict[int, dict] = {
         "is_event": True,
         "carries_image_url": True,
     },
+    # Verified on hardware 2026-08-27: device volume. Observed carrying 1, 7 and
+    # 10, which is what the range is taken from -- if a device ever reports
+    # outside it, the bounds are wrong rather than the device.
+    160: {"name": "Device Volume", "dp_type": DP_TYPE_INT, "entity_type": ENTITY_NUMBER,
+          "min": 1, "max": 10},
     # Verified on hardware 2026-08-27: starts chime pairing. Reported as an
     # enum carrying "1" then "0", so it behaves as an action rather than a
     # setting that stays put.
