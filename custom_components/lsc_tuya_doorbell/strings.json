@@ -8,41 +8,80 @@
           "method": "Setup method"
         }
       },
-      "discovery": {
-        "title": "Device Discovery",
-        "description": "Found {count} device(s) on your network. Select your doorbell.",
+      "discover": {
+        "title": "Searching for Devices"
+      },
+      "pick_device": {
+        "title": "Select Device",
+        "description": "Found {count} device(s) you can still add ({skipped} already configured). Pick your doorbell, or configure one manually.",
         "data": {
-          "device": "Select device"
+          "device": "Device"
         }
       },
       "manual": {
         "title": "Manual Configuration",
         "description": "Enter the device connection details.",
         "data": {
-          "host": "IP Address",
+          "host": "IP address",
           "device_id": "Device ID",
           "port": "Port",
-          "protocol_version": "Protocol Version"
+          "protocol_version": "Protocol version"
+        },
+        "data_description": {
+          "protocol_version": "If you are unsure, leave this at 3.3 — the other versions are tried automatically when it does not work."
         }
       },
       "credentials": {
         "title": "Device Credentials",
-        "description": "Device: {device_id} at {host} (protocol {version})\n\nEnter the local key for this device.",
+        "description": "Device: {device_id} at {host}\n\nEnter the local key for this device. You can find it in the Tuya IoT developer portal, or with a tool such as tuya-cloudcutter.\n\nProtocol version {version} is preselected, {version_source}. Correct it if you know better — the other versions are tried automatically if this one fails, and whichever works is the one that gets stored.",
         "data": {
-          "local_key": "Local Key (16 characters)",
-          "device_name": "Device Name",
-          "onvif_password": "ONVIF/RTSP Password (optional)"
+          "local_key": "Local key (16 characters)",
+          "device_name": "Device name",
+          "onvif_password": "ONVIF/RTSP password (optional)",
+          "protocol_version": "Protocol version"
+        },
+        "data_description": {
+          "protocol_version": "What the device speaks over TCP. Leave it alone if you are unsure."
+        }
+      },
+      "reauth_confirm": {
+        "title": "Re-enter Local Key",
+        "description": "Tuya changed the local key of {name} ({device_id} at {host}), so the doorbell no longer accepts the stored one. This happens when a device is re-paired in the Tuya or Smart Life app.\n\nLook up the new local key and enter it here. Your entities and automations stay exactly as they are.",
+        "data": {
+          "local_key": "Local key (16 characters)"
+        }
+      },
+      "reconfigure": {
+        "title": "Reconfigure Device",
+        "description": "Change the connection details for {device_id}. The new settings are tested before they are saved, and your entities keep their IDs.",
+        "data": {
+          "host": "IP address",
+          "port": "Port",
+          "local_key": "Local key (16 characters)",
+          "protocol_version": "Protocol version"
         }
       }
     },
+    "progress": {
+      "discovering": "Listening for Tuya broadcasts on the local network. Devices announce themselves every few seconds, so this takes up to 10 seconds."
+    },
     "error": {
-      "cannot_connect": "Could not connect to the device. Check the IP address and port.",
-      "heartbeat_failed": "Connected but device did not respond to heartbeat. Check the local key.",
-      "invalid_local_key": "Local key must be exactly 16 characters.",
-      "unknown": "An unexpected error occurred."
+      "cannot_connect": "Could not reach the device. Check the IP address and port, and that the doorbell is powered on and on the same network.",
+      "heartbeat_failed": "The device accepted the connection but never answered. This usually means the local key is wrong for this device.",
+      "invalid_local_key_length": "A local key is exactly 16 characters.",
+      "invalid_local_key": "The device rejected this local key. Look it up again in the Tuya IoT developer portal — Tuya changes it whenever a device is re-paired.",
+      "unsupported_protocol_version": "The device speaks a Tuya protocol version this integration does not support (only 3.3, 3.4 and 3.5 are supported). Devices on 3.1 or 3.2 need a firmware update, or have to be used through the Tuya cloud integration.",
+      "decryption_failed": "The device's reply could not be decrypted. That means either the local key or the protocol version is wrong.",
+      "protocol_error": "The device sent something this integration could not read. Check the logs — the protocol layer records exactly which frame failed.",
+      "timeout": "The device did not answer in time. It may be asleep, busy streaming, or on a poor Wi-Fi connection.",
+      "discovery_failed": "Discovery could not run. Check the logs, and add the doorbell manually with its IP address and device ID.",
+      "unknown": "An unexpected error occurred. Check the logs for details."
     },
     "abort": {
-      "already_configured": "This device is already configured."
+      "already_configured": "This device is already configured.",
+      "reauth_successful": "The new local key works — the doorbell is connected again.",
+      "reconfigure_successful": "The new settings work and have been saved.",
+      "entry_not_found": "That configuration entry no longer exists."
     }
   },
   "options": {
@@ -50,32 +89,37 @@
       "init": {
         "title": "LSC Tuya Doorbell Options",
         "description": "Choose what you want to configure.",
-        "data": {
-          "menu": "Option"
+        "menu_options": {
+          "connection": "Connection settings",
+          "camera_settings": "Camera settings",
+          "snapshot_settings": "Snapshot settings",
+          "dp_list": "Manage datapoints",
+          "dp_scan_mode": "Scan for datapoints",
+          "live_capture": "Live capture (find button and motion datapoints)"
         }
       },
       "connection": {
         "title": "Connection Settings",
         "description": "Modify connection settings for your doorbell.",
         "data": {
-          "host": "IP Address",
+          "host": "IP address",
           "port": "Port",
-          "protocol_version": "Protocol Version"
+          "protocol_version": "Protocol version"
         }
       },
       "dp_list": {
         "title": "Manage Datapoints",
-        "description": "Your device has {count} configured datapoint(s). Select one to edit or add a new one.",
+        "description": "Your device has {count} configured datapoint(s). Select one to edit, or add a new one.",
         "data": {
           "dp_select": "Datapoint"
         }
       },
       "dp_edit": {
         "title": "Edit Datapoint",
-        "description": "Edit datapoint DP {dp_id}: {name}",
+        "description": "Edit datapoint DP {dp_id}: {name} (role: {role})",
         "data": {
           "name": "Name",
-          "entity_type": "Entity Type",
+          "entity_type": "Entity type",
           "delete": "Delete this datapoint"
         }
       },
@@ -85,59 +129,165 @@
         "data": {
           "dp_id": "DP ID (1-255)",
           "name": "Name",
-          "dp_type": "Data Type",
-          "entity_type": "Entity Type"
+          "dp_type": "Data type",
+          "entity_type": "Entity type"
         }
       },
       "camera_settings": {
         "title": "Camera Settings",
-        "description": "Configure RTSP camera stream and snapshot settings.",
+        "description": "Configure the RTSP camera stream. {trigger_hint}",
         "data": {
-          "onvif_username": "ONVIF/RTSP Username",
-          "onvif_password": "ONVIF/RTSP Password",
-          "rtsp_port": "RTSP Port",
-          "rtsp_path": "RTSP Stream Path",
-          "snapshot_path": "Snapshot Save Directory",
-          "force_record_on": "Auto-enable Record Switch (DP 101) — some Tuya devices randomly disable ONVIF/recording; this forces it back on",
-          "snapshot_trigger_dps": "Capture RTSP snapshot on event — select which datapoints trigger a video snapshot (default: Doorbell Button only)",
-          "stream_url_override": "Stream URL override — full RTSP URL to use instead of the one built from host/port/path. Point this at a restreamer such as go2rtc when multiple consumers need the stream; leave empty for the default.",
-          "still_image_url_override": "Still image URL override — HTTP URL returning a single JPEG, used for snapshots instead of grabbing a frame off the RTSP stream. For go2rtc: http://HOST:1984/api/frame.jpeg?src=NAME. Leave empty for the default."
+          "onvif_username": "ONVIF/RTSP username",
+          "onvif_password": "ONVIF/RTSP password",
+          "rtsp_port": "RTSP port",
+          "rtsp_path": "RTSP stream path",
+          "snapshot_path": "Snapshot save directory",
+          "force_record_on": "Auto-enable the record switch",
+          "snapshot_trigger_dps": "Take a snapshot when these datapoints fire",
+          "stream_url_override": "Stream URL override",
+          "still_image_url_override": "Still image URL override"
+        },
+        "data_description": {
+          "force_record_on": "Some Tuya devices randomly turn recording — and with it ONVIF — off. This forces it back on.",
+          "snapshot_trigger_dps": "Only datapoints this device actually reports are listed. Run a scan or a live capture to fill this list.",
+          "stream_url_override": "Full RTSP URL to use instead of the one built from host, port and path. Point this at a restreamer such as go2rtc when several consumers need the stream; leave empty for the default.",
+          "still_image_url_override": "HTTP URL returning a single JPEG, used for snapshots instead of grabbing a frame off the RTSP stream. For go2rtc: http://HOST:1984/api/frame.jpeg?src=NAME. Leave empty for the default."
+        }
+      },
+      "snapshot_settings": {
+        "title": "Snapshot Settings",
+        "description": "How a picture is produced when the doorbell fires.\n\nBuffer mode keeps recent video in the buffer directory. /dev/shm is RAM, so nothing is written to your SD card or SSD — but Docker gives /dev/shm only 64 MB by default, which you raise with shm_size. Budget roughly 15 MB per minute at 2 Mbit/s; 60 seconds is about {buffer_estimate} MB.",
+        "data": {
+          "snapshot_mode": "Snapshot mode",
+          "snapshot_buffer_path": "Buffer directory",
+          "snapshot_buffer_seconds": "Buffer length",
+          "snapshot_delay_ms": "Look back by"
+        },
+        "data_description": {
+          "snapshot_mode": "'On demand' works everywhere and needs no configuration. 'Warm' keeps one ffmpeg running so a still is always ready. 'Buffer' additionally keeps the last few seconds of video on disk, which is the only mode that can look back in time.",
+          "snapshot_buffer_path": "Only used in buffer mode. Put it on tmpfs (/dev/shm) so the segments never touch persistent storage; see above for the size it needs.",
+          "snapshot_buffer_seconds": "How much video is kept. Longer means more memory.",
+          "snapshot_delay_ms": "The doorbell reports a press seconds after it happened, so a picture of 'now' shows the visitor already walking away. This takes the picture that many milliseconds earlier. Only buffer mode can look back — in the other modes this setting is ignored."
         }
       },
       "dp_scan_mode": {
         "title": "Scan for Datapoints",
-        "description": "The scan queries the device for all available datapoints (DPs 1-255). This can take up to 2 minutes.\n\nYou can safely close this dialog while the scan runs — just come back here to see the results.",
+        "description": "The scan asks the device for every datapoint it will answer for (DP 1-255). This can take up to 2 minutes.\n\nNothing is saved until you have picked what to keep. Datapoints that only fire on an event — the doorbell button, motion — cannot be found this way; use live capture for those.\n\nYou can safely close this dialog while the scan runs and come back for the results.",
         "data": {
-          "clear_existing": "Clear existing datapoints (replace all with scan results)",
-          "force_rescan": "Force new scan (discard previous results)"
+          "clear_existing": "Replace all existing datapoints with the scan results",
+          "force_rescan": "Run a new scan (discard the previous results)"
         }
       },
       "dp_scan": {
-        "title": "Scanning for Datapoints",
-        "description": "{status}\n\nFound {found_count} datapoint(s): {found_dps}\n\nYou can close this dialog — the scan will continue in the background. Come back to see results.",
-        "progress_action": {
-          "dp_scan": "Scanning datapoints on the device..."
-        }
+        "title": "Scanning for Datapoints"
       },
       "dp_scan_failed": {
-        "title": "Scan for Datapoints",
-        "description": "The datapoint scan did not complete successfully."
+        "title": "Scan Failed",
+        "description": "The datapoint scan did not complete. Try again, or go back to the options menu.",
+        "data": {
+          "action": "What now?"
+        }
       },
       "dp_scan_results": {
         "title": "Scan Results",
-        "description": "Found {count} datapoint(s) on the device. Select which to add to your profile.",
+        "description": "Found {count} datapoint(s). Pick the ones you want; only these are written to the device profile, with everything the scan learned about them.",
         "data": {
-          "selected_dps": "Datapoints to add"
+          "selected_dps": "Datapoints to keep"
+        }
+      },
+      "live_capture": {
+        "title": "Live Capture",
+        "description": "Capture is running ({elapsed}s) — {count} datapoint(s) seen: {summary}\n\nPress the doorbell, walk in front of it, and work through the Tuya app. A datapoint marked ⟳ has reported more than one value and behaves like an event; those are the ones a doorbell button and a motion sensor hide behind.\n\nEvent candidates so far: {events}\n\nSubmit to refresh this screen. Tick 'Done' when you have triggered everything you want to find.",
+        "data": {
+          "done": "Done — stop capturing"
+        }
+      },
+      "capture_review": {
+        "title": "Capture Results",
+        "description": "The capture saw {count} datapoint(s). Pick the ones to keep; ⟳ marks the ones that behave like events.",
+        "data": {
+          "selected_dps": "Datapoints to keep"
+        }
+      },
+      "assign_roles": {
+        "title": "Assign Roles",
+        "description": "{count} datapoint(s) will be saved. Say what they do — the integration acts on roles, not on datapoint numbers, so a role you leave unassigned simply stays off.",
+        "data": {
+          "doorbell_button": "Doorbell button",
+          "motion": "Motion detection",
+          "record_switch": "Recording switch"
         }
       }
+    },
+    "progress": {
+      "dp_scan": "{status} — found {found_count} datapoint(s): {found_dps}. You can close this dialog; the scan continues in the background."
     },
     "error": {
       "dp_already_exists": "A datapoint with this ID already exists.",
       "dp_id_out_of_range": "DP ID must be between 1 and 255.",
-      "device_unavailable": "Device is not connected. Check the connection first.",
-      "cannot_connect": "Could not connect to the device.",
-      "scan_failed": "Datapoint scan failed. Check the logs for details.",
-      "scan_timeout": "Datapoint scan timed out after 120 seconds. The device may be slow or unresponsive."
+      "device_unavailable": "The doorbell is not connected. Fix the connection first — a scan or capture needs a live device.",
+      "hub_unavailable": "The integration is not loaded for this device. Reload the entry and try again.",
+      "cannot_connect": "Could not reach the device. Check the IP address and port.",
+      "heartbeat_failed": "The device accepted the connection but never answered. This usually means the local key is wrong.",
+      "invalid_local_key": "The device rejected the stored local key. Tuya changes it whenever a device is re-paired — re-authenticate the integration with the new key.",
+      "unsupported_protocol_version": "The device speaks a Tuya protocol version this integration does not support (only 3.3, 3.4 and 3.5 are supported).",
+      "decryption_failed": "The device's reply could not be decrypted. That means either the local key or the protocol version is wrong.",
+      "protocol_error": "The device sent something this integration could not read. Check the logs for the frame that failed.",
+      "timeout": "The device did not answer in time.",
+      "scan_failed": "The datapoint scan failed. Check the logs for details.",
+      "scan_timeout": "The datapoint scan timed out after 120 seconds. The device may be slow or unresponsive.",
+      "no_dps_selected": "Select at least one datapoint, or go back if you want to keep none.",
+      "capture_found_nothing": "The capture did not see a single datapoint. The device may have been disconnected — check that it is online, then try again and press the doorbell while the capture runs.",
+      "unknown": "An unexpected error occurred. Check the logs for details."
+    },
+    "abort": {
+      "hub_unavailable": "The integration is not loaded for this device. Reload the entry and try again."
+    }
+  },
+  "selector": {
+    "setup_method": {
+      "options": {
+        "discover": "Search the network for devices",
+        "manual": "Enter the details myself"
+      }
+    },
+    "entity_type": {
+      "options": {
+        "switch": "Switch",
+        "sensor": "Sensor",
+        "select": "Select",
+        "number": "Number",
+        "binary_sensor": "Binary sensor"
+      }
+    },
+    "dp_type": {
+      "options": {
+        "bool": "Boolean",
+        "int": "Integer",
+        "enum": "Enum",
+        "string": "String",
+        "raw": "Raw"
+      }
+    },
+    "snapshot_mode": {
+      "options": {
+        "off": "Off — no snapshots",
+        "on_demand": "On demand — fetch a picture when something happens (default)",
+        "warm": "Warm — keep a fresh still ready at all times",
+        "buffer": "Buffer — keep recent video in memory so snapshots can look back in time"
+      }
+    },
+    "scan_failed_action": {
+      "options": {
+        "retry": "Try the scan again",
+        "back": "Back to the options menu"
+      }
+    }
+  },
+  "issues": {
+    "no_doorbell_role": {
+      "title": "No doorbell button datapoint on {device_name}",
+      "description": "Home Assistant does not know which datapoint on {device_name} (`{device_id}`) reports a button press, so pressing the doorbell will not trigger anything.\n\nDatapoint numbers differ between models and firmware versions, so they cannot be assumed. Open the integration options and run **Live capture**, then press the doorbell while it listens. Assign the datapoint that appears to the doorbell button role."
     }
   }
 }
