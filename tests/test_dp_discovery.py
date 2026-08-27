@@ -122,7 +122,7 @@ def test_a_datapoint_that_settles_does_not() -> None:
 def test_the_table_wins_by_default(engine: DPDiscoveryEngine) -> None:
     dp = engine.classify_dp(101, 1)
     assert dp.is_known is True
-    assert dp.name == "Record Switch"
+    assert dp.name == "Indicator Light"
 
 
 def test_when_learning_the_observation_wins(engine: DPDiscoveryEngine) -> None:
@@ -132,7 +132,7 @@ def test_when_learning_the_observation_wins(engine: DPDiscoveryEngine) -> None:
 
     assert from_table.dp_type == "bool"        # what the table claims
     assert from_device.dp_type != "bool"       # what the device actually sent
-    assert from_device.name == "Record Switch"  # the table may still lend a name
+    assert from_device.name == "Indicator Light"  # the table may still lend a name
     assert from_device.is_known is False
 
 

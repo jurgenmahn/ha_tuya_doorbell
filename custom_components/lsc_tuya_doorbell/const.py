@@ -147,7 +147,10 @@ ROLES: tuple[str, ...] = (ROLE_DOORBELL_BUTTON, ROLE_MOTION, ROLE_RECORD_SWITCH)
 DEFAULT_ROLE_DPS: dict[str, int] = {
     ROLE_DOORBELL_BUTTON: DP_DOORBELL_BUTTON,
     ROLE_MOTION: DP_MOTION_DETECTION,
-    ROLE_RECORD_SWITCH: DP_RECORD_SWITCH,
+    # ROLE_RECORD_SWITCH deliberately absent. DP 101 was assumed to be the
+    # record switch and is verified to be the indicator light, so seeding it
+    # would point "force recording on" at an LED and toggle it forever. A role
+    # nobody assigned is off; a role pointed at the wrong datapoint acts.
 }
 
 # Snapshot configuration.
@@ -222,13 +225,17 @@ SD_STATUS_MAP = {
 # Known DP definitions: {dp_id: (name, dp_type, entity_type, options)}
 # Firmware v4 mappings
 KNOWN_DPS_V4: dict[int, dict] = {
-    101: {"name": "Record Switch", "dp_type": DP_TYPE_BOOL, "entity_type": ENTITY_SWITCH},
+    # Verified on hardware 2026-08-27: the indicator light. Not the record
+    # switch, which is what made this number dangerous -- see DEFAULT_ROLE_DPS.
+    101: {"name": "Indicator Light", "dp_type": DP_TYPE_BOOL, "entity_type": ENTITY_SWITCH},
     # Verified on hardware 2026-08-27: flips the image. The table did know about
     # an image flip -- it had it on DP 134, which actually arms the motion alarm.
     # Right concept, wrong number, and it called this one a three-state night
     # vision enum while the device reports a plain boolean.
     103: {"name": "Image Flip", "dp_type": DP_TYPE_BOOL, "entity_type": ENTITY_SWITCH},
-    104: {"name": "Indicator Light", "dp_type": DP_TYPE_BOOL, "entity_type": ENTITY_SWITCH},
+    # Verified on hardware 2026-08-27: the timestamp burned into the image. The
+    # indicator light the table put here is DP 101.
+    104: {"name": "Time Watermark", "dp_type": DP_TYPE_BOOL, "entity_type": ENTITY_SWITCH},
     106: {
         "name": "Motion Sensitivity",
         "dp_type": DP_TYPE_ENUM,

@@ -266,3 +266,29 @@ def test_the_union_is_what_makes_inference_worth_doing() -> None:
     assert KNOWN_DPS_V4[110]["name"] != KNOWN_DPS_V5[110]["name"]
     assert known_dps_for(None)[110]["name"] == KNOWN_DPS_V5[110]["name"]
     assert known_dps_for("4")[110]["name"] == KNOWN_DPS_V4[110]["name"]
+
+
+def test_the_record_switch_role_is_never_seeded() -> None:
+    """DP 101 was assumed to be the record switch and is the indicator light.
+
+    Seeding it would point "force recording on" at an LED and have the
+    integration toggle it back on forever. A role nobody assigned does nothing;
+    a role pointed at the wrong datapoint acts on it.
+    """
+    from custom_components.lsc_tuya_doorbell.const import (
+        DEFAULT_ROLE_DPS,
+        ROLE_DOORBELL_BUTTON,
+        ROLE_RECORD_SWITCH,
+    )
+
+    assert ROLE_RECORD_SWITCH not in DEFAULT_ROLE_DPS
+    assert ROLE_DOORBELL_BUTTON in DEFAULT_ROLE_DPS
+
+
+def test_a_legacy_profile_gets_no_record_switch_even_though_101_is_present() -> None:
+    from custom_components.lsc_tuya_doorbell.const import ROLE_RECORD_SWITCH
+
+    profile = _profile_with(101, 185)
+    profile.seed_roles()
+
+    assert profile.role_dp(ROLE_RECORD_SWITCH) is None
