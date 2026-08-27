@@ -1,2 +1,6 @@
 /${CLAUDE_CODE_DATA_DIR}
 /venv
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/

@@ -7,13 +7,14 @@ from typing import Any
 
 from homeassistant.components.number import NumberEntity
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity import EntityCategory
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .const import DOMAIN, ENTITY_NUMBER
 from .dp_registry import DPDefinition
 from .entity import LscTuyaEntity
+from .entity_meta import definitions_for_platform
 from .hub import DeviceHub
 
 _LOGGER = logging.getLogger(__name__)
@@ -22,18 +23,18 @@ _LOGGER = logging.getLogger(__name__)
 async def async_setup_entry(
     hass: HomeAssistant,
     config_entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback,
+    async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up numbers from a config entry."""
     hub: DeviceHub = hass.data[DOMAIN][config_entry.entry_id]
-    entities = []
+    definitions = definitions_for_platform(hub.profile, ENTITY_NUMBER)
+    entities = [LscTuyaNumber(hub, dp_def) for dp_def in definitions]
 
-    if hub.profile:
-        for dp_id, dp_def in hub.profile.discovered_dps.items():
-            if dp_def.entity_type == ENTITY_NUMBER:
-                entities.append(LscTuyaNumber(hub, dp_def))
-
-    _LOGGER.debug("Number setup: creating %d entities: %s", len(entities), [e._dp_id for e in entities])
+    _LOGGER.debug(
+        "Number setup: creating %d entities: %s",
+        len(entities),
+        [dp_def.dp_id for dp_def in definitions],
+    )
     async_add_entities(entities)
 
 
@@ -72,6 +73,8 @@ class LscTuyaNumber(LscTuyaEntity, NumberEntity):
         if last_state.state not in (None, "unknown", "unavailable"):
             try:
                 self._state_value = int(float(last_state.state))
-                _LOGGER.debug("Number DP %d: restored value=%s", self._dp_id, self._state_value)
+                _LOGGER.debug(
+                    "Number DP %d: restored value=%s", self._dp_id, self._state_value
+                )
             except (ValueError, TypeError):
                 pass

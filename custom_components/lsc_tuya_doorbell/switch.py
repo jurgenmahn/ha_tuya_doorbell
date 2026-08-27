@@ -7,13 +7,14 @@ from typing import Any
 
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity import EntityCategory
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .const import DOMAIN, ENTITY_SWITCH
 from .dp_registry import DPDefinition
 from .entity import LscTuyaEntity
+from .entity_meta import definitions_for_platform
 from .hub import DeviceHub
 
 _LOGGER = logging.getLogger(__name__)
@@ -22,18 +23,18 @@ _LOGGER = logging.getLogger(__name__)
 async def async_setup_entry(
     hass: HomeAssistant,
     config_entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback,
+    async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up switches from a config entry."""
     hub: DeviceHub = hass.data[DOMAIN][config_entry.entry_id]
-    entities = []
+    definitions = definitions_for_platform(hub.profile, ENTITY_SWITCH)
+    entities = [LscTuyaSwitch(hub, dp_def) for dp_def in definitions]
 
-    if hub.profile:
-        for dp_id, dp_def in hub.profile.discovered_dps.items():
-            if dp_def.entity_type == ENTITY_SWITCH:
-                entities.append(LscTuyaSwitch(hub, dp_def))
-
-    _LOGGER.debug("Switch setup: creating %d entities: %s", len(entities), [e._dp_id for e in entities])
+    _LOGGER.debug(
+        "Switch setup: creating %d entities: %s",
+        len(entities),
+        [dp_def.dp_id for dp_def in definitions],
+    )
     async_add_entities(entities)
 
 
@@ -41,9 +42,6 @@ class LscTuyaSwitch(LscTuyaEntity, SwitchEntity):
     """Switch entity for boolean Tuya datapoints."""
 
     _attr_entity_category = EntityCategory.CONFIG
-
-    def __init__(self, hub: DeviceHub, dp_definition: DPDefinition) -> None:
-        super().__init__(hub, dp_definition)
 
     @property
     def is_on(self) -> bool | None:

@@ -7,15 +7,12 @@ import hmac
 import logging
 import os
 import struct
-from typing import TYPE_CHECKING
 
+from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-from .constants import GCM_NONCE_SIZE, UDP_KEY
-
-if TYPE_CHECKING:
-    pass
+from .constants import GCM_NONCE_SIZE, UDP_KEY, DecryptionError
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -48,9 +45,19 @@ class TuyaCipher:
         return result
 
     def decrypt_ecb(self, ciphertext: bytes, key: bytes | None = None) -> bytes:
-        """Decrypt data using AES-128-ECB with PKCS7 unpadding."""
+        """Decrypt data using AES-128-ECB with PKCS7 unpadding.
+
+        Raises DecryptionError when the result is not validly padded. ECB has no
+        authentication tag, so the padding is the only signal that the key was
+        right — accepting a bad unpad would hand random bytes to the caller.
+        """
         use_key = key or self._local_key
         _LOGGER.debug("ECB decrypt: %d bytes ciphertext (key=%s)", len(ciphertext), "session" if key else "local")
+        if not ciphertext or len(ciphertext) % 16 != 0:
+            raise DecryptionError(
+                f"AES-ECB input is {len(ciphertext)} bytes, which is not a whole "
+                f"number of 16-byte blocks"
+            )
         cipher = Cipher(algorithms.AES(use_key), modes.ECB())
         decryptor = cipher.decryptor()
         padded = decryptor.update(ciphertext) + decryptor.finalize()
@@ -76,10 +83,19 @@ class TuyaCipher:
     def decrypt_gcm(
         self, ciphertext: bytes, key: bytes, iv: bytes, tag: bytes, aad: bytes | None = None
     ) -> bytes:
-        """Decrypt data using AES-128-GCM."""
+        """Decrypt data using AES-128-GCM.
+
+        Raises DecryptionError when the authentication tag does not verify.
+        """
         _LOGGER.debug("GCM decrypt: %d bytes ciphertext, iv=%s", len(ciphertext), iv.hex())
         aesgcm = AESGCM(key)
-        result = aesgcm.decrypt(iv, ciphertext + tag, aad)
+        try:
+            result = aesgcm.decrypt(iv, ciphertext + tag, aad)
+        except InvalidTag as err:
+            raise DecryptionError(
+                "AES-GCM authentication failed: the frame was encrypted with a "
+                "different key than the one we hold"
+            ) from err
         _LOGGER.debug("GCM decrypt: %d bytes plaintext", len(result))
         return result
 
@@ -102,7 +118,15 @@ class TuyaCipher:
 
     @staticmethod
     def decrypt_udp(data: bytes) -> bytes:
-        """Decrypt UDP broadcast data using the fixed UDP key (AES-ECB)."""
+        """Decrypt UDP broadcast data using the fixed UDP key (AES-ECB).
+
+        Raises DecryptionError for anything that is not a well-formed broadcast;
+        the caller uses that to skip packets from unrelated devices.
+        """
+        if not data or len(data) % 16 != 0:
+            raise DecryptionError(
+                f"UDP broadcast is {len(data)} bytes, not a whole number of AES blocks"
+            )
         cipher = Cipher(algorithms.AES(UDP_KEY), modes.ECB())
         decryptor = cipher.decryptor()
         padded = decryptor.update(data) + decryptor.finalize()
@@ -152,12 +176,18 @@ class TuyaCipher:
 
     @staticmethod
     def _pkcs7_unpad(data: bytes) -> bytes:
-        """Remove PKCS7 padding."""
+        """Remove PKCS7 padding, rejecting anything that is not validly padded.
+
+        Returning the data unchanged on bad padding used to hide wrong-key
+        decryptions: the caller then handed random bytes on as a payload.
+        """
         if not data:
-            return data
+            raise DecryptionError("Cannot unpad an empty block")
         pad_len = data[-1]
-        if pad_len < 1 or pad_len > 16:
-            return data  # Invalid padding, return as-is
+        if pad_len < 1 or pad_len > 16 or pad_len > len(data):
+            raise DecryptionError(
+                f"Invalid PKCS7 padding length {pad_len} in a {len(data)}-byte block"
+            )
         if data[-pad_len:] != bytes([pad_len] * pad_len):
-            return data  # Invalid padding, return as-is
+            raise DecryptionError("Invalid PKCS7 padding bytes")
         return data[:-pad_len]
