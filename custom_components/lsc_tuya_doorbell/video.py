@@ -339,9 +339,17 @@ def build_buffer_args(
         ffmpeg_bin,
         *_COMMON_FLAGS,
         *_input_flags(source_url),
+        # A re-encoded restream can arrive without usable timestamps, and the
+        # segment muxer refuses it outright: "first pts and dts value must be
+        # set", one segment written, exit. Measured against a VAAPI restream of
+        # this doorbell -- generating timestamps and rebasing them to zero is
+        # what makes it record, and it costs nothing on a stream that was
+        # already fine.
+        "-fflags", "+genpts",
         "-i", source_url,
         "-an",
         "-c:v", "copy",
+        "-avoid_negative_ts", "make_zero",
         "-f", "segment",
         "-segment_time", str(segment_seconds),
         "-reset_timestamps", "1",

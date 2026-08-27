@@ -983,3 +983,18 @@ class TestAgainstRealFfmpeg:
         assert is_jpeg(early) and is_jpeg(late)
         # testsrc counts up on screen, so a real seek changes the image.
         assert early != late
+
+
+def test_the_recorder_repairs_timestamps_a_restream_may_not_have():
+    """Measured: a VAAPI restream of this doorbell arrives without usable
+    timestamps, and the segment muxer refuses it with "first pts and dts value
+    must be set" -- one segment, then exit. Both flags are needed, and neither
+    costs anything on a stream that was already well-formed."""
+    from custom_components.lsc_tuya_doorbell.video import build_buffer_args
+
+    args = build_buffer_args("ffmpeg", "rtsp://cam/live", "/dev/shm/x", 1)
+
+    assert args[args.index("-fflags") + 1] == "+genpts"
+    assert args.index("-fflags") < args.index("-i")
+    assert args[args.index("-avoid_negative_ts") + 1] == "make_zero"
+    assert args.index("-avoid_negative_ts") > args.index("-i")
