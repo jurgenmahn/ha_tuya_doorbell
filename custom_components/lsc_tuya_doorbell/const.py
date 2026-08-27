@@ -158,6 +158,9 @@ DEFAULT_ROLE_DPS: dict[str, int] = {
 # Defaults live in video.py, which deliberately imports nothing from here, so
 # there is one source of truth and no cycle.
 CONF_SNAPSHOT_MODE = "snapshot_mode"
+# Where the recording modes read video from, when that should not be the same
+# place the camera entity streams from. Empty means: use the camera's source.
+CONF_SNAPSHOT_SOURCE_URL = "snapshot_source_url"
 CONF_SNAPSHOT_BUFFER_PATH = "snapshot_buffer_path"
 CONF_SNAPSHOT_BUFFER_SECONDS = "snapshot_buffer_seconds"
 CONF_SNAPSHOT_DELAY_MS = "snapshot_delay_ms"

@@ -52,6 +52,7 @@ from .const import (
     CONF_RTSP_PATH,
     CONF_RTSP_PORT,
     CONF_SNAPSHOT_BUFFER_PATH,
+    CONF_SNAPSHOT_SOURCE_URL,
     CONF_SNAPSHOT_BUFFER_SECONDS,
     CONF_SNAPSHOT_DELAY_MS,
     CONF_SNAPSHOT_MODE,
@@ -1735,7 +1736,7 @@ class DeviceHub:
         """Assemble the snapshot provider from the entry's configuration."""
         config = video.SnapshotConfig(
             mode=self._option(CONF_SNAPSHOT_MODE, video.DEFAULT_SNAPSHOT_MODE),
-            source_url=self.stream_url,
+            source_url=self._snapshot_source_url(),
             still_url=self.still_image_url,
             buffer_path=self._option(
                 CONF_SNAPSHOT_BUFFER_PATH, video.DEFAULT_BUFFER_PATH
@@ -1750,6 +1751,19 @@ class DeviceHub:
             still_fetcher=self._async_fetch_still,
             task_factory=lambda coro, name: self._spawn(coro, name),
         )
+
+    def _snapshot_source_url(self) -> str | None:
+        """Where the recording modes read video from.
+
+        Separate from the camera's stream on purpose. Someone already running a
+        restreamer for other reasons -- Frigate, say -- can point the ring buffer
+        at it without changing how the camera entity works, and equally can
+        record straight from the doorbell while the camera goes through the
+        restreamer. Tying the two together meant a second restreamer just to
+        look two seconds into the past.
+        """
+        own = (self._option(CONF_SNAPSHOT_SOURCE_URL, "") or "").strip()
+        return own or self.stream_url
 
     async def _async_fetch_still(self, url: str) -> bytes | None:
         """Fetch a single JPEG from the configured still-image URL.

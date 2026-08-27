@@ -985,18 +985,26 @@ class TestSnapshotModeSplit:
     def test_off_asks_nothing(self):
         assert config_flow.snapshot_fields_for("off") == ()
 
-    @pytest.mark.parametrize("mode", ["on_demand", "warm"])
-    def test_the_simple_modes_ask_for_triggers_and_a_still_url(self, mode):
-        assert set(config_flow.snapshot_fields_for(mode)) == {
+    def test_on_demand_asks_for_triggers_and_a_still_url(self):
+        assert set(config_flow.snapshot_fields_for("on_demand")) == {
             "snapshot_trigger_dps",
             "still_image_url_override",
         }
+
+    def test_the_recording_modes_can_read_from_somewhere_else(self):
+        """A restreamer already running for other reasons should be usable
+        without also routing the camera entity through it."""
+        for mode in ("warm", "buffer"):
+            assert "snapshot_source_url" in config_flow.snapshot_fields_for(mode)
+        assert "snapshot_source_url" not in config_flow.snapshot_fields_for("on_demand")
+        assert "snapshot_source_url" not in config_flow.snapshot_fields_for("off")
 
     def test_only_buffer_mode_has_a_buffer(self):
         fields = config_flow.snapshot_fields_for("buffer")
         assert set(fields) == {
             "snapshot_trigger_dps",
             "still_image_url_override",
+            "snapshot_source_url",
             "snapshot_buffer_path",
             "snapshot_buffer_seconds",
             "snapshot_delay_ms",
@@ -1035,6 +1043,7 @@ class TestSnapshotModeSplit:
         assert _fields(result) == {
             "snapshot_trigger_dps",
             "still_image_url_override",
+            "snapshot_source_url",
             "back",
         }
 
@@ -1046,6 +1055,7 @@ class TestSnapshotModeSplit:
         assert _fields(result) == {
             "snapshot_trigger_dps",
             "still_image_url_override",
+            "snapshot_source_url",
             "snapshot_buffer_path",
             "snapshot_buffer_seconds",
             "snapshot_delay_ms",
@@ -1056,9 +1066,12 @@ class TestSnapshotModeSplit:
     async def test_a_device_without_datapoints_is_not_offered_a_trigger_list(self):
         flow = _options_flow({}, hub=_FakeHub(_OptionsProfile({})))
         result = await flow.async_step_snapshot_settings({"snapshot_mode": "warm"})
-        # No datapoints means no trigger list, but a still image URL is still
-        # a sensible thing to configure.
-        assert _fields(result) == {"still_image_url_override", "back"}
+        # No datapoints means no trigger list; the picture settings still apply.
+        assert _fields(result) == {
+            "still_image_url_override",
+            "snapshot_source_url",
+            "back",
+        }
 
     @pytest.mark.asyncio
     async def test_the_follow_up_saves_the_mode_it_was_reached_with(self):

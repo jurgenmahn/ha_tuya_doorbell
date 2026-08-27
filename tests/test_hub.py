@@ -1310,3 +1310,25 @@ class TestTheEventFlagIsAChoice:
         await hub.update_dp(244, name="Doorbell (alt)")
 
         assert hub.definition_for(244).is_event is True
+
+
+class TestRecordingCanReadFromElsewhere:
+    @pytest.mark.asyncio
+    async def test_it_follows_the_camera_when_nothing_is_set(self, tmp_path):
+        hub = make_hub(tmp_path)
+        assert hub._snapshot_source_url() == hub.stream_url
+
+    @pytest.mark.asyncio
+    async def test_its_own_source_wins(self, tmp_path):
+        """Someone already restreaming this doorbell should not have to stand up
+        a second restreamer just to look two seconds into the past."""
+        hub = make_hub(
+            tmp_path,
+            options={"snapshot_source_url": "rtsp://frigate:8554/doorbell"},
+        )
+        assert hub._snapshot_source_url() == "rtsp://frigate:8554/doorbell"
+
+    @pytest.mark.asyncio
+    async def test_whitespace_is_not_a_source(self, tmp_path):
+        hub = make_hub(tmp_path, options={"snapshot_source_url": "   "})
+        assert hub._snapshot_source_url() == hub.stream_url

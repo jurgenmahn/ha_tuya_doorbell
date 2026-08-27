@@ -42,6 +42,7 @@ from .const import (
     CONF_RTSP_PATH,
     CONF_RTSP_PORT,
     CONF_SNAPSHOT_BUFFER_PATH,
+    CONF_SNAPSHOT_SOURCE_URL,
     CONF_SNAPSHOT_BUFFER_SECONDS,
     CONF_SNAPSHOT_DELAY_MS,
     CONF_SNAPSHOT_MODE,
@@ -211,9 +212,16 @@ def snapshot_fields_for(mode: str) -> tuple[str, ...]:
         return (
             CONF_SNAPSHOT_TRIGGER_DPS,
             CONF_STILL_IMAGE_URL_OVERRIDE,
+            CONF_SNAPSHOT_SOURCE_URL,
             CONF_SNAPSHOT_BUFFER_PATH,
             CONF_SNAPSHOT_BUFFER_SECONDS,
             CONF_SNAPSHOT_DELAY_MS,
+        )
+    if mode == video.MODE_WARM:
+        return (
+            CONF_SNAPSHOT_TRIGGER_DPS,
+            CONF_STILL_IMAGE_URL_OVERRIDE,
+            CONF_SNAPSHOT_SOURCE_URL,
         )
     return (CONF_SNAPSHOT_TRIGGER_DPS, CONF_STILL_IMAGE_URL_OVERRIDE)
 
@@ -1365,6 +1373,11 @@ class LscTuyaDoorbellOptionsFlow(OptionsFlow):
                     CONF_STILL_IMAGE_URL_OVERRIDE, ""
                 ).strip()
 
+            if CONF_SNAPSHOT_SOURCE_URL in fields:
+                new_options[CONF_SNAPSHOT_SOURCE_URL] = user_input.get(
+                    CONF_SNAPSHOT_SOURCE_URL, ""
+                ).strip()
+
             if CONF_SNAPSHOT_BUFFER_PATH in fields:
                 new_options[CONF_SNAPSHOT_BUFFER_PATH] = user_input[
                     CONF_SNAPSHOT_BUFFER_PATH
@@ -1390,6 +1403,13 @@ class LscTuyaDoorbellOptionsFlow(OptionsFlow):
                 vol.Optional(
                     CONF_STILL_IMAGE_URL_OVERRIDE,
                     default=opts.get(CONF_STILL_IMAGE_URL_OVERRIDE, ""),
+                )
+            ] = str
+        if CONF_SNAPSHOT_SOURCE_URL in fields:
+            schema[
+                vol.Optional(
+                    CONF_SNAPSHOT_SOURCE_URL,
+                    default=opts.get(CONF_SNAPSHOT_SOURCE_URL, ""),
                 )
             ] = str
         if CONF_SNAPSHOT_BUFFER_PATH in fields:
