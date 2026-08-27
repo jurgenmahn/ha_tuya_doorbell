@@ -223,12 +223,11 @@ SD_STATUS_MAP = {
 # Firmware v4 mappings
 KNOWN_DPS_V4: dict[int, dict] = {
     101: {"name": "Record Switch", "dp_type": DP_TYPE_BOOL, "entity_type": ENTITY_SWITCH},
-    103: {
-        "name": "Night Vision",
-        "dp_type": DP_TYPE_ENUM,
-        "entity_type": ENTITY_SELECT,
-        "options": {"0": "auto", "1": "on", "2": "off"},
-    },
+    # Observed on hardware 2026-08-27 reporting True and False -- a boolean, not
+    # the three-state enum this entry claimed, and night vision is DP 108 on
+    # this device. What it does switch is not established, so it gets a name
+    # that does not pretend otherwise.
+    103: {"name": "DP 103 (switch)", "dp_type": DP_TYPE_BOOL, "entity_type": ENTITY_SWITCH},
     104: {"name": "Indicator Light", "dp_type": DP_TYPE_BOOL, "entity_type": ENTITY_SWITCH},
     106: {
         "name": "Motion Sensitivity",
@@ -236,11 +235,15 @@ KNOWN_DPS_V4: dict[int, dict] = {
         "entity_type": ENTITY_SELECT,
         "options": {"0": "low", "1": "medium", "2": "high"},
     },
+    # Verified on hardware 2026-08-27: infrared night vision, not an OSD toggle.
+    # Note the order -- 1 is off and 2 is on, which is the reverse of what DP 103
+    # claims for the same three states. One of the two is mislabelled; this one
+    # was checked against the device.
     108: {
-        "name": "Basic OSD",
+        "name": "IR Night Vision",
         "dp_type": DP_TYPE_ENUM,
         "entity_type": ENTITY_SELECT,
-        "options": {"0": "off", "1": "on"},
+        "options": {"0": "auto", "1": "off", "2": "on"},
     },
     109: {"name": "SD Storage Info", "dp_type": DP_TYPE_STRING, "entity_type": ENTITY_SENSOR},
     110: {
