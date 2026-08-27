@@ -19,6 +19,6 @@
     "custom_components.lsc_tuya_doorbell"
   ],
   "requirements": [],
-  "version": "2.10.0",
+  "version": "3.0.0",
   "homeassistant": "2024.11.0"
 }
