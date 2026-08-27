@@ -695,29 +695,88 @@ class TestDatapointChoices:
         assert "Nothing reported yet" in config_flow.capture_summary([])
 
 
+
+class _FakeProfile:
+    """A profile stand-in carrying only what the role screen reads."""
+
+    def __init__(self, dps):
+        self.discovered_dps = dps
+        self.roles = {}
+
+
+def _profile(names):
+    return _FakeProfile({
+        dp_id: type("D", (), {"dp_id": dp_id, "name": name, "dp_type": "bool"})()
+        for dp_id, name in names.items()
+    })
+
 class TestRoles:
     def test_every_role_can_be_left_unassigned(self):
         options = config_flow.role_choice_options([_dp(101)])
         assert config_flow.ROLE_NONE in options
 
     def test_a_role_defaults_to_what_the_profile_already_says(self):
-        dps = [_dp(101), _dp(185)]
+        options = config_flow.role_choice_options([_dp(101), _dp(185)])
         assert (
-            config_flow.suggested_role_dp("doorbell_button", dps, {"doorbell_button": 185})
+            config_flow.suggested_role_dp(
+                "doorbell_button", options, {"doorbell_button": 185}
+            )
             == "185"
         )
 
     def test_a_role_is_never_guessed_from_a_datapoint_number(self):
         """DP 185 is the doorbell button on one model, and nothing on the rest."""
+        options = config_flow.role_choice_options([_dp(185)])
         assert (
-            config_flow.suggested_role_dp("doorbell_button", [_dp(185)], {})
+            config_flow.suggested_role_dp("doorbell_button", options, {})
             == config_flow.ROLE_NONE
         )
 
-    def test_a_stale_role_pointing_outside_the_selection_is_dropped(self):
+    def test_a_stale_role_pointing_at_nothing_is_dropped(self):
+        options = config_flow.role_choice_options([_dp(101)])
+        assert (
+            config_flow.suggested_role_dp("motion", options, {"motion": 999})
+            == config_flow.ROLE_NONE
+        )
+
+    # --- A second capture must not wipe the roles from the first ---
+
+    def test_a_later_capture_still_offers_the_datapoints_already_configured(self):
+        """The bug: rescanning for one missing datapoint cleared the other roles.
+
+        A role select that cannot offer the datapoint a role points at submits
+        "not assigned", so the assignment was actively erased -- not merely left
+        alone.
+        """
+        profile = _profile({101: "Record Switch", 185: "Doorbell Button"})
+        options = config_flow.role_choice_options([_dp(244)], profile)
+
+        assert "244" in options
+        assert "185" in options and "101" in options
+        assert "already configured" in options["185"]
+
+    def test_an_existing_role_survives_a_capture_that_did_not_see_it(self):
+        profile = _profile({185: "Doorbell Button"})
+        options = config_flow.role_choice_options([_dp(244)], profile)
+
         assert (
             config_flow.suggested_role_dp(
-                "motion", [_dp(101)], {"motion": 999}
+                "doorbell_button", options, {"doorbell_button": 185}
+            )
+            == "185"
+        )
+
+    def test_clearing_the_profile_stops_offering_the_old_datapoints(self):
+        """With clear_existing they are on their way out; a role there is a role at nothing."""
+        profile = _profile({185: "Doorbell Button"})
+        options = config_flow.role_choice_options(
+            [_dp(244)], profile, clear_existing=True
+        )
+
+        assert "185" not in options
+        assert (
+            config_flow.suggested_role_dp(
+                "doorbell_button", options, {"doorbell_button": 185}
             )
             == config_flow.ROLE_NONE
         )

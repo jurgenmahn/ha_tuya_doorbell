@@ -261,15 +261,41 @@ def capture_summary(found: Sequence[Any]) -> str:
     )
 
 
-def role_choice_options(discovered: Sequence[Any]) -> dict[str, str]:
-    """Options for assigning one role to one datapoint, including "not assigned"."""
+def role_choice_options(
+    discovered: Sequence[Any],
+    profile: Any | None = None,
+    *,
+    clear_existing: bool = False,
+) -> dict[str, str]:
+    """Options for assigning one role to one datapoint, including "not assigned".
+
+    Offers everything the device will have afterwards, not only what this round
+    turned up. A second capture run to catch one missing datapoint would
+    otherwise leave the roles pointing at datapoints the select cannot offer,
+    and a select that cannot offer a value submits "not assigned" -- silently
+    clearing roles the user set up earlier and never touched.
+
+    With clear_existing the old datapoints are on their way out, so they are not
+    offered: assigning a role to one would be assigning it to nothing.
+    """
     options = {ROLE_NONE: "Not assigned"}
     options.update({str(dp.dp_id): dp_label(dp) for dp in discovered})
+
+    if profile is not None and not clear_existing:
+        chosen = {dp.dp_id for dp in discovered}
+        for dp_id, definition in sorted(getattr(profile, "discovered_dps", {}).items()):
+            if dp_id not in chosen:
+                options[str(dp_id)] = dp_label(
+                    definition, suffix=" — already configured"
+                )
+
     return options
 
 
 def suggested_role_dp(
-    role: str, discovered: Sequence[Any], current: Mapping[str, int] | None = None
+    role: str,
+    options: Mapping[str, str],
+    current: Mapping[str, int] | None = None,
 ) -> str:
     """Pre-fill a role select: whatever the profile already says, else nothing.
 
@@ -278,7 +304,7 @@ def suggested_role_dp(
     """
     if current and role in current:
         claimed = str(current[role])
-        if any(str(dp.dp_id) == claimed for dp in discovered):
+        if claimed in options:
             return claimed
     return ROLE_NONE
 
@@ -1448,7 +1474,11 @@ class LscTuyaDoorbellOptionsFlow(OptionsFlow):
         if hub is None:
             return self.async_abort(reason="hub_unavailable")
 
-        options = role_choice_options(self._pending_dps)
+        options = role_choice_options(
+            self._pending_dps,
+            hub.profile,
+            clear_existing=self._pending_clear_existing,
+        )
         current = dict(hub.profile.roles) if hub.profile else {}
 
         if user_input is not None:
@@ -1471,7 +1501,7 @@ class LscTuyaDoorbellOptionsFlow(OptionsFlow):
                 {
                     vol.Optional(
                         role,
-                        default=suggested_role_dp(role, self._pending_dps, current),
+                        default=suggested_role_dp(role, options, current),
                     ): vol.In(options)
                     for role in ROLES
                 }

@@ -197,7 +197,7 @@
       },
       "live_capture": {
         "title": "Live Capture",
-        "description": "Capture is running ({elapsed}s) — {count} datapoint(s) seen: {summary}\n\nPress the doorbell, walk in front of it, and work through the Tuya app. A datapoint marked ⟳ has reported more than one value and behaves like an event; those are the ones a doorbell button and a motion sensor hide behind.\n\nEvent candidates so far: {events}\n\nSubmit to refresh this screen. Tick 'Done' when you have triggered everything you want to find.",
+        "description": "Capture is running ({elapsed}s) — {count} datapoint(s) seen: {summary}\n\nPress the doorbell, walk in front of it, and work through the Tuya app. A datapoint marked ⟳ has reported more than one value and behaves like an event; those are the ones a doorbell button and a motion sensor hide behind.\n\nWorth doing while you are here: toggle every switch and setting in the Tuya app off and on again — night vision, the chime, the indicator light, recording mode, all of them. A datapoint only shows up once the device has reported it, and a setting that nobody touches never does. Switching each one twice returns it to where it was and reveals it at the same time.\n\nEvent candidates so far: {events}\n\nSubmit to refresh this screen. Tick 'Done' when you have triggered everything you want to find.",
         "data": {
           "done": "Done — stop capturing"
         }
