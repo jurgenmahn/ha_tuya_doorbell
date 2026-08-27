@@ -227,15 +227,15 @@ SD_STATUS_MAP = {
 KNOWN_DPS_V4: dict[int, dict] = {
     # Verified on hardware 2026-08-27: the indicator light. Not the record
     # switch, which is what made this number dangerous -- see DEFAULT_ROLE_DPS.
-    101: {"name": "Indicator Light", "dp_type": DP_TYPE_BOOL, "entity_type": ENTITY_SWITCH},
+    101: {"verified": True, "name": "Indicator Light", "dp_type": DP_TYPE_BOOL, "entity_type": ENTITY_SWITCH},
     # Verified on hardware 2026-08-27: flips the image. The table did know about
     # an image flip -- it had it on DP 134, which actually arms the motion alarm.
     # Right concept, wrong number, and it called this one a three-state night
     # vision enum while the device reports a plain boolean.
-    103: {"name": "Image Flip", "dp_type": DP_TYPE_BOOL, "entity_type": ENTITY_SWITCH},
+    103: {"verified": True, "name": "Image Flip", "dp_type": DP_TYPE_BOOL, "entity_type": ENTITY_SWITCH},
     # Verified on hardware 2026-08-27: the timestamp burned into the image. The
     # indicator light the table put here is DP 101.
-    104: {"name": "Time Watermark", "dp_type": DP_TYPE_BOOL, "entity_type": ENTITY_SWITCH},
+    104: {"verified": True, "name": "Time Watermark", "dp_type": DP_TYPE_BOOL, "entity_type": ENTITY_SWITCH},
     106: {
         "name": "Motion Sensitivity",
         "dp_type": DP_TYPE_ENUM,
@@ -246,7 +246,7 @@ KNOWN_DPS_V4: dict[int, dict] = {
     # Note the order -- 1 is off and 2 is on, which is the reverse of what DP 103
     # claims for the same three states. One of the two is mislabelled; this one
     # was checked against the device.
-    108: {
+    108: {"verified": True, 
         "name": "IR Night Vision",
         "dp_type": DP_TYPE_ENUM,
         "entity_type": ENTITY_SELECT,
@@ -259,7 +259,7 @@ KNOWN_DPS_V4: dict[int, dict] = {
         "entity_type": ENTITY_SENSOR,
         "value_map": SD_STATUS_MAP,
     },
-    115: {
+    115: {"verified": True, 
         "name": "Motion Detection",
         "dp_type": DP_TYPE_RAW,
         "entity_type": ENTITY_BINARY_SENSOR,
@@ -269,23 +269,23 @@ KNOWN_DPS_V4: dict[int, dict] = {
     # Verified on hardware 2026-08-27: device volume. Observed carrying 1, 7 and
     # 10, which is what the range is taken from -- if a device ever reports
     # outside it, the bounds are wrong rather than the device.
-    160: {"name": "Device Volume", "dp_type": DP_TYPE_INT, "entity_type": ENTITY_NUMBER,
+    160: {"verified": True, "name": "Device Volume", "dp_type": DP_TYPE_INT, "entity_type": ENTITY_NUMBER,
           "min": 1, "max": 10},
     # Verified on hardware 2026-08-27: starts chime pairing. Reported as an
     # enum carrying "1" then "0", so it behaves as an action rather than a
     # setting that stays put.
-    155: {"name": "Chime Pairing", "dp_type": DP_TYPE_ENUM, "entity_type": ENTITY_SELECT,
+    155: {"verified": True, "name": "Chime Pairing", "dp_type": DP_TYPE_ENUM, "entity_type": ENTITY_SELECT,
           "options": {"0": "idle", "1": "pairing"}},
     # Verified on hardware 2026-08-27: this toggles the motion detection alarm,
     # not the image flip the table claimed. Both generations had it wrong, which
     # is the argument for the live capture in one line.
-    134: {"name": "Motion Alarm", "dp_type": DP_TYPE_BOOL, "entity_type": ENTITY_SWITCH},
+    134: {"verified": True, "name": "Motion Alarm", "dp_type": DP_TYPE_BOOL, "entity_type": ENTITY_SWITCH},
     # Verified on hardware 2026-08-27: enables and disables video recording.
     # Not the chime. This is the third v4 entry found to be wrong on a device
     # the table is supposed to describe -- treat the tables as a starting point
     # for names, never as a statement about what a datapoint does.
-    150: {"name": "Video Recording", "dp_type": DP_TYPE_BOOL, "entity_type": ENTITY_SWITCH},
-    151: {
+    150: {"verified": True, "name": "Video Recording", "dp_type": DP_TYPE_BOOL, "entity_type": ENTITY_SWITCH},
+    151: {"verified": True, 
         "name": "Recording Mode",
         "dp_type": DP_TYPE_ENUM,
         "entity_type": ENTITY_SELECT,
@@ -301,7 +301,7 @@ KNOWN_DPS_V4: dict[int, dict] = {
     # sensor and "doorbell" to an event entity, so a single string would be
     # wrong on one of the two. The role tables in entity_meta.py pick the right
     # one per platform.
-    185: {
+    185: {"verified": True, 
         "name": "Doorbell Button",
         "dp_type": DP_TYPE_RAW,
         "entity_type": ENTITY_BINARY_SENSOR,
@@ -425,6 +425,30 @@ def infer_firmware_generation(dp_ids: Iterable[int]) -> str | None:
         return None
     winners = [gen for gen, score in scores.items() if score == best]
     return winners[0] if len(winners) == 1 else None
+
+
+def verified_dps_for(firmware_version: str | None) -> dict[int, dict]:
+    """Only the entries someone has checked against real hardware.
+
+    This is what names a datapoint. The rest of the table is kept for
+    known_dps_for(), which needs to know which datapoints a generation *has* in
+    order to tell the generations apart -- presence is reliable in a way that
+    meaning is not.
+
+    Nine v4 entries were checked against one doorbell and eight were wrong,
+    usually with the right concept on the wrong number: an image flip filed
+    under the motion alarm, an indicator light filed under the timestamp
+    overlay. At that rate an unchecked name is likelier to mislead than to help,
+    and "DP 110" is understood by everyone while "Basic OSD" on a datapoint that
+    reports SD card status is understood by no one.
+
+    Contributions welcome: verify one against your device and mark it.
+    """
+    return {
+        dp_id: entry
+        for dp_id, entry in known_dps_for(firmware_version).items()
+        if entry.get("verified")
+    }
 
 
 def known_dps_for(firmware_version: str | None) -> dict[int, dict]:

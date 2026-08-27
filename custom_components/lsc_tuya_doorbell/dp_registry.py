@@ -24,7 +24,7 @@ from .const import (
     ENTITY_SWITCH,
     KNOWN_DPS,
     ROLES,
-    known_dps_for,
+    verified_dps_for,
 )
 from .dp_discovery import DiscoveredDP
 
@@ -199,11 +199,13 @@ class DPRegistry:
     ) -> DPDefinition | None:
         """Look up a DP in the known definitions table for this firmware.
 
-        Without a firmware version this falls back to the union of both
-        generations, where v5 wins any disagreement -- see AMBIGUOUS_DPS.
+        Only entries verified against real hardware lend a name. An unchecked
+        one is likelier to mislead than to help: of the nine checked so far,
+        eight were wrong. A datapoint nobody has confirmed stays "DP 110",
+        which is honest and understood, rather than carrying a label from
+        another model.
         """
-        table = known_dps_for(firmware_version) if firmware_version else KNOWN_DPS
-        known = table.get(dp_id)
+        known = verified_dps_for(firmware_version).get(dp_id)
         if not known:
             return None
         return DPDefinition(

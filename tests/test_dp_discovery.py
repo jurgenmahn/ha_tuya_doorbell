@@ -136,11 +136,20 @@ def test_when_learning_the_observation_wins(engine: DPDiscoveryEngine) -> None:
     assert from_device.is_known is False
 
 
-def test_classification_follows_the_firmware() -> None:
+def test_an_unverified_datapoint_gets_no_name_from_any_table() -> None:
+    """A wrong name is worse than none. DP 110 is called different things by the
+    two generations and neither has been checked against hardware, so it stays
+    what it is: a number."""
     v4 = DPDiscoveryEngine(FakeConnection(), firmware_version="4").classify_dp(110, 1)
     v5 = DPDiscoveryEngine(FakeConnection(), firmware_version="5").classify_dp(110, 1)
 
-    assert v4.name != v5.name
+    assert v4.name == v5.name == "DP 110"
+    assert v4.is_known is False
+
+
+def test_a_verified_datapoint_is_still_named() -> None:
+    dp = DPDiscoveryEngine(FakeConnection(), firmware_version="4").classify_dp(134, True)
+    assert dp.name == "Motion Alarm"
 
 
 # --------------------------------------------------------------------------

@@ -913,13 +913,13 @@ class TestProfileWriting:
     async def test_apply_writes_full_definitions(self, tmp_path):
         hub = make_hub(tmp_path)
         await hub.async_apply_discovered_dps(
-            [DiscoveredDP(dp_id=103, value="1", dp_type=DP_TYPE_ENUM, name="Night Vision")],
+            [DiscoveredDP(dp_id=108, value="1", dp_type=DP_TYPE_ENUM, name="IR Night Vision")],
             roles={ROLE_DOORBELL_BUTTON: None},
         )
 
-        definition = hub.definition_for(103)
+        definition = hub.definition_for(108)
         assert definition.entity_type == "select"
-        assert definition.options == {"0": "auto", "1": "on", "2": "off"}
+        assert definition.options == {"0": "auto", "1": "off", "2": "on"}
         assert hub._dp_registry.saved
 
     @pytest.mark.asyncio
@@ -1060,8 +1060,13 @@ class TestProfileEnrichment:
 
         hub._enrich_profile_from_known_table()
 
-        assert hub.definition_for(110).value_map[2] == "no_card"
+        # 185 has been checked against hardware, so it gains what the table
+        # knows about it.
         assert hub.definition_for(DOORBELL_DP).carries_image_url is True
+        # 110 has not. Two firmware generations disagree about what it even is,
+        # and enriching from a guess is how a datapoint ends up carrying status
+        # codes for values it never reports.
+        assert hub.definition_for(110).value_map is None
 
     def test_a_renamed_datapoint_is_left_alone(self, tmp_path):
         profile = DeviceProfile(device_id="dev123", firmware_version="4")

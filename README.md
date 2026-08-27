@@ -633,7 +633,7 @@ doorbell and eight were wrong, almost always in the same way: the concept was
 real but sat on a different number. The table knew about an image flip and put
 it on 134, where the device actually arms the motion alarm; it knew about an
 indicator light and put it on 104, where the device burns a timestamp into the
-picture. Entries marked ✓ have been verified against hardware.
+picture. Only entries marked verified are used to name anything. The rest are kept because knowing which datapoints a generation *has* is what tells the generations apart -- presence is reliable in a way that meaning is not -- but they will never put a name on your device.
 
 One of those was worse than a wrong label. DP 101 was listed as the record
 switch and is the indicator light, so "force recording on" would have watched an
@@ -646,41 +646,41 @@ found.
 
 **Firmware v4**
 
-| DP | Name | Type | Entity | |
+| DP | Name | Type | Entity | Verified |
 |---|---|---|---|---|
-| 101 | Indicator Light | bool | Switch | ✓ |
-| 103 | Image Flip | bool | Switch | ✓ |
-| 104 | Time Watermark | bool | Switch | ✓ |
-| 106 | Motion Sensitivity | enum | Select (low/medium/high) |  |
-| 108 | IR Night Vision | enum | Select (auto/off/on) | ✓ |
-| 109 | SD Storage Info | string | Sensor |  |
-| 110 | SD Card Status | int | Sensor (status codes mapped) |  |
-| 115 | Motion Detection | raw | Binary sensor + event |  |
-| 134 | Motion Alarm | bool | Switch | ✓ |
-| 150 | Video Recording | bool | Switch | ✓ |
-| 151 | Recording Mode | enum | Select (event/continuous) | ✓ |
-| 154 | DP 154 (number) | int | Number |  |
-| 155 | Chime Pairing | enum | Select (idle/pairing) | ✓ |
-| 160 | Device Volume | int | Number (1-10) | ✓ |
-| 185 | Doorbell Button | raw | Binary sensor + event |  |
+| 101 | Indicator Light | bool | Switch | yes |
+| 103 | Image Flip | bool | Switch | yes |
+| 104 | Time Watermark | bool | Switch | yes |
+| 106 | Motion Sensitivity | enum | Select (low/medium/high) | no |
+| 108 | IR Night Vision | enum | Select (auto/off/on) | yes |
+| 109 | SD Storage Info | string | Sensor | no |
+| 110 | SD Card Status | int | Sensor (status codes mapped) | no |
+| 115 | Motion Detection | raw | Binary sensor + event | yes |
+| 134 | Motion Alarm | bool | Switch | yes |
+| 150 | Video Recording | bool | Switch | yes |
+| 151 | Recording Mode | enum | Select (event/continuous) | yes |
+| 154 | DP 154 (number) | int | Number | no |
+| 155 | Chime Pairing | enum | Select (idle/pairing) | yes |
+| 160 | Device Volume | int | Number (1-10) | yes |
+| 185 | Doorbell Button | raw | Binary sensor + event | yes |
 
 **Firmware v5**
 
-| DP | Name | Type | Entity | |
+| DP | Name | Type | Entity | Verified |
 |---|---|---|---|---|
-| 101 | Record Switch | bool | Switch | ✓ |
-| 103 | Night Vision | enum | Select (auto/on/off) | ✓ |
-| 104 | Indicator Light | bool | Switch | ✓ |
-| 105 | Vision Flip | bool | Switch |  |
-| 106 | Motion Sensitivity | enum | Select (low/medium/high) |  |
-| 109 | SD Card Status | int | Sensor (status codes mapped) |  |
-| 110 | Basic OSD | bool | Switch |  |
-| 115 | Motion Detection | raw | Binary sensor + event |  |
-| 134 | Chime Switch | bool | Switch | ✓ |
-| 135 | Chime Volume | int | Number (0-10) |  |
-| 139 | Device Volume | int | Number (1-10) |  |
-| 151 | Recording Mode | enum | Select (event/continuous) | ✓ |
-| 185 | Doorbell Button | raw | Binary sensor + event |  |
+| 101 | Record Switch | bool | Switch | no |
+| 103 | Night Vision | enum | Select (auto/on/off) | no |
+| 104 | Indicator Light | bool | Switch | no |
+| 105 | Vision Flip | bool | Switch | no |
+| 106 | Motion Sensitivity | enum | Select (low/medium/high) | no |
+| 109 | SD Card Status | int | Sensor (status codes mapped) | no |
+| 110 | Basic OSD | bool | Switch | no |
+| 115 | Motion Detection | raw | Binary sensor + event | no |
+| 134 | Chime Switch | bool | Switch | no |
+| 135 | Chime Volume | int | Number (0-10) | no |
+| 139 | Device Volume | int | Number (1-10) | no |
+| 151 | Recording Mode | enum | Select (event/continuous) | no |
+| 185 | Doorbell Button | raw | Binary sensor + event | no |
 
 Neither table is complete, and neither is authoritative.
 

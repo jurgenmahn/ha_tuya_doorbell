@@ -37,6 +37,7 @@ from . import video
 from .const import (
     KNOWN_DPS_BY_FIRMWARE,
     known_dps_for,
+    verified_dps_for,
     infer_firmware_generation,
     CONF_DEVICE_ID,
     CONF_DEVICE_NAME,
@@ -957,7 +958,7 @@ class DeviceHub:
             for table in KNOWN_DPS_BY_FIRMWARE.values()
             for entry in table.values()
         }
-        wanted = known_dps_for(generation) if generation else {}
+        wanted = verified_dps_for(generation) if generation else {}
 
         changed = 0
         for dp_id, definition in self._profile.discovered_dps.items():

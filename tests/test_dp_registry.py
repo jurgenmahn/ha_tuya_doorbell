@@ -207,14 +207,24 @@ def test_firmware_strings_are_parsed_leniently(firmware: str) -> None:
     assert known_dps_for(firmware)[110]["name"] == "SD Card Status"
 
 
-def test_registry_lookup_respects_firmware() -> None:
+def test_only_verified_entries_lend_a_name() -> None:
+    """Eight of the nine entries checked against hardware were wrong, so an
+    unchecked one is likelier to mislead than to help."""
     registry = DPRegistry()
 
-    v4 = registry.get_known_dp(110, firmware_version="4")
-    v5 = registry.get_known_dp(110, firmware_version="5")
+    assert registry.get_known_dp(110, firmware_version="4") is None
+    assert registry.get_known_dp(110, firmware_version="5") is None
 
-    assert v4 is not None and v5 is not None
-    assert v4.name != v5.name
+    verified = registry.get_known_dp(134, firmware_version="4")
+    assert verified is not None and verified.name == "Motion Alarm"
+
+
+def test_presence_still_distinguishes_the_generations() -> None:
+    """Naming is withheld, but which datapoints a generation has is not in
+    doubt -- that is what firmware inference runs on."""
+    from custom_components.lsc_tuya_doorbell.const import known_dps_for
+
+    assert known_dps_for("4")[110]["name"] != known_dps_for("5")[110]["name"]
 
 
 def test_unknown_firmware_falls_back_to_the_union() -> None:

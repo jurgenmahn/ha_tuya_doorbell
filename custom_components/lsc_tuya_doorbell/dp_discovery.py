@@ -21,6 +21,7 @@ from .const import (
     DP_TYPE_STRING,
     KNOWN_DPS,
     known_dps_for,
+    verified_dps_for,
 )
 from .protocol.connection import TuyaConnection
 from .protocol.constants import Command
@@ -298,7 +299,7 @@ class DPDiscoveryEngine:
         Without that, a device whose DP 134 does something entirely different
         still gets labelled from the table it does not follow.
         """
-        known = known_dps_for(self.firmware_version).get(dp_id)
+        known = verified_dps_for(self.firmware_version).get(dp_id)
         dp_type = self.detect_type(dp_id, value)
 
         if known and trust_observation:

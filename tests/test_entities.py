@@ -326,7 +326,7 @@ class TestKnownDefinitionsCarryTheirMetadata:
 
     def test_registry_forwards_the_self_describing_fields(self, monkeypatch):
         table = {
-            42: {
+            42: {"verified": True, 
                 "name": "SD Card Status",
                 "dp_type": "int",
                 "entity_type": ENTITY_SENSOR,
@@ -337,7 +337,8 @@ class TestKnownDefinitionsCarryTheirMetadata:
             }
         }
         monkeypatch.setattr(
-            "custom_components.lsc_tuya_doorbell.dp_registry.KNOWN_DPS", table
+            "custom_components.lsc_tuya_doorbell.dp_registry.verified_dps_for",
+            lambda firmware_version=None: table,
         )
 
         definition = DPRegistry().get_known_dp(42)
