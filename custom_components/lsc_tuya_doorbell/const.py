@@ -265,7 +265,11 @@ KNOWN_DPS_V4: dict[int, dict] = {
     # not the image flip the table claimed. Both generations had it wrong, which
     # is the argument for the live capture in one line.
     134: {"name": "Motion Alarm", "dp_type": DP_TYPE_BOOL, "entity_type": ENTITY_SWITCH},
-    150: {"name": "Chime Switch", "dp_type": DP_TYPE_BOOL, "entity_type": ENTITY_SWITCH},
+    # Verified on hardware 2026-08-27: enables and disables video recording.
+    # Not the chime. This is the third v4 entry found to be wrong on a device
+    # the table is supposed to describe -- treat the tables as a starting point
+    # for names, never as a statement about what a datapoint does.
+    150: {"name": "Video Recording", "dp_type": DP_TYPE_BOOL, "entity_type": ENTITY_SWITCH},
     151: {
         "name": "Recording Mode",
         "dp_type": DP_TYPE_ENUM,
