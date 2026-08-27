@@ -82,6 +82,21 @@ the user.
   adapters Home Assistant already knows about, prefix included, instead of
   guessing a /24.
 
+- **Datapoint names are only given when someone has verified them.** Nine v4
+  table entries were checked against a real doorbell and eight were wrong,
+  usually with the right concept on the wrong number. Unverified entries no
+  longer name anything; the datapoint keeps its number, which is honest and
+  understood. The entries stay, because knowing which datapoints a generation
+  *has* is what tells the generations apart, and presence is reliable where
+  meaning is not.
+- **Roles can be assigned from the options menu** without running a capture
+  first. Deciding which datapoint is the button is a decision, not a side
+  effect of discovering datapoints.
+- **The firmware generation can be set by hand**, and is inferred from the
+  datapoints a device reports when a profile is written.
+- **A name you type is recorded as yours** and nothing automatic overwrites it,
+  including a name that happens to match a table entry.
+
 ### Changed
 
 - **Known-datapoint tables are selected by firmware generation** instead of
@@ -122,6 +137,21 @@ the user.
   profile written by a newer version cannot stop an older one from starting.
 - Minimum Home Assistant version raised to **2025.3**; `hacs.json` now declares
   the same minimum as the manifest.
+
+- **Settings ask one question at a time.** Home Assistant has no conditional
+  fields, so camera settings now start with where the video comes from and
+  snapshot settings with the mode, and the follow-up shows only what applies.
+  Submitting a sub-step returns to the menu instead of closing the dialog.
+- **The still image URL moved to the snapshot settings**, where it is read.
+  Behaviour is unchanged: it was always tried first, in every mode.
+- **The live capture screen refreshes itself**, shows what each datapoint
+  carried, and marks the ones that reported just now -- which is how you find a
+  button: press it a few times and watch what moves. Closing the dialog ends the
+  session and keeps what it found.
+- Datapoint names verified against hardware: 101 indicator light, 103 image
+  flip, 104 timestamp overlay, 108 infrared night vision, 115 motion, 134 motion
+  alarm, 150 video recording, 151 recording mode, 155 chime pairing, 160 device
+  volume, 185 doorbell button.
 
 ### Fixed
 
@@ -225,6 +255,25 @@ the user.
   probes.
 - **The `discover_devices` service used the private UDP listener** and therefore
   hit the same port conflict as the config flow: it structurally found nothing.
+
+- **The record switch role is no longer seeded from a datapoint number.** DP 101
+  was assumed to be the record switch and is the indicator light, so "force
+  recording on" would have watched an LED and switched it back on forever.
+- **Entities left behind when a datapoint changes kind are removed.** A
+  unique_id is only unique within a domain, so a datapoint that was a switch and
+  became a number kept both entries and Home Assistant could not tell they were
+  the same thing.
+- **A video source that cannot be recorded is given up on** after six failures,
+  with an error saying what to do, instead of restarting forever and never
+  taking a picture.
+- **Relabelling a datapoint carries its bounds, options and value map**, so a
+  volume control described as 1-10 no longer sits on the 0-100 the number
+  platform falls back to.
+- **A second capture no longer clears the roles set by the first.** The role
+  screen offered only that round's datapoints, and a select with nothing to
+  select submits "not assigned".
+- The scan result screen said "Datapoints to keep", which reads as though
+  unticking one removes it. It never did.
 
 ### Removed
 
