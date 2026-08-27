@@ -1276,3 +1276,37 @@ class TestEntitiesLeftBehindByATypeChange:
         )
 
         assert stale == [] and orphaned == []
+
+
+class TestTheEventFlagIsAChoice:
+    """Whether a datapoint fires cannot be worked out from its values.
+
+    A volume slider moved twice reports two different values, exactly like a
+    button pressed twice. The capture marks candidates; a person decides.
+    """
+
+    @pytest.mark.asyncio
+    async def test_the_flag_can_be_set_on_an_existing_datapoint(self, tmp_path):
+        profile = DeviceProfile(device_id="dev123", firmware_version="4")
+        profile.discovered_dps[244] = DPDefinition(
+            dp_id=244, name="DP 244", dp_type=DP_TYPE_RAW,
+            entity_type=ENTITY_BINARY_SENSOR, is_event=False,
+        )
+        hub = make_hub(tmp_path, profile=profile)
+
+        await hub.update_dp(244, is_event=True)
+
+        assert hub.definition_for(244).is_event is True
+
+    @pytest.mark.asyncio
+    async def test_not_passing_it_leaves_it_alone(self, tmp_path):
+        profile = DeviceProfile(device_id="dev123", firmware_version="4")
+        profile.discovered_dps[244] = DPDefinition(
+            dp_id=244, name="DP 244", dp_type=DP_TYPE_RAW,
+            entity_type=ENTITY_BINARY_SENSOR, is_event=True,
+        )
+        hub = make_hub(tmp_path, profile=profile)
+
+        await hub.update_dp(244, name="Doorbell (alt)")
+
+        assert hub.definition_for(244).is_event is True

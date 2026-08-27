@@ -837,7 +837,7 @@ class _FakeHub:
         self.updated: list[tuple] = []
         self.removed: list[int] = []
 
-    async def update_dp(self, dp_id, name=None, entity_type=None):
+    async def update_dp(self, dp_id, name=None, entity_type=None, is_event=None):
         self.updated.append((dp_id, name, entity_type))
 
     async def remove_dp(self, dp_id):

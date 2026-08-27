@@ -1251,6 +1251,7 @@ class DeviceHub:
         dp_id: int,
         name: str | None = None,
         entity_type: str | None = None,
+        is_event: bool | None = None,
     ) -> None:
         """Update an existing datapoint definition."""
         if not self._profile or dp_id not in self._profile.discovered_dps:
@@ -1263,6 +1264,8 @@ class DeviceHub:
             definition.user_named = True
         if entity_type is not None:
             definition.entity_type = entity_type
+        if is_event is not None:
+            definition.is_event = is_event
         await self._dp_registry.save_profile(self._hass, self._profile)
         _LOGGER.info("Updated DP %d: name=%s entity_type=%s", dp_id, definition.name, definition.entity_type)
 

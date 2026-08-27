@@ -138,7 +138,11 @@
           "name": "Name",
           "entity_type": "Entity type",
           "delete": "Delete this datapoint",
-          "back": "Back to the datapoint list (nothing on this screen is saved)"
+          "back": "Back to the datapoint list (nothing on this screen is saved)",
+          "is_event": "Fires an event"
+        },
+        "data_description": {
+          "is_event": "Tick this when the device reports a datapoint at the moment something happens rather than to say what it is set to — a button press, motion. It gets an event entity alongside its normal one, and the live capture marks likely candidates with ⟳. It cannot be worked out automatically: a volume slider moved twice looks the same from here."
         }
       },
       "dp_add": {

@@ -1535,6 +1535,7 @@ class LscTuyaDoorbellOptionsFlow(OptionsFlow):
                     dp_id,
                     name=user_input.get("name"),
                     entity_type=user_input.get("entity_type"),
+                    is_event=user_input.get("is_event", False),
                 )
             await self.hass.config_entries.async_reload(self._config_entry.entry_id)
             # Back to the list, not out of the dialog: editing datapoints is
@@ -1551,6 +1552,9 @@ class LscTuyaDoorbellOptionsFlow(OptionsFlow):
                         vol.Required(
                             "entity_type", default=dp_def.entity_type
                         ): _select(ENTITY_TYPES, "entity_type"),
+                        vol.Optional(
+                            "is_event", default=dp_def.is_event
+                        ): bool,
                         vol.Optional("delete", default=False): bool,
                     }
                 )

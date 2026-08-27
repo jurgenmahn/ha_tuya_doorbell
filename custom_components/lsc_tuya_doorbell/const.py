@@ -301,6 +301,8 @@ KNOWN_DPS_V4: dict[int, dict] = {
     # sensor and "doorbell" to an event entity, so a single string would be
     # wrong on one of the two. The role tables in entity_meta.py pick the right
     # one per platform.
+    # Verified on hardware 2026-08-27: switches the ONVIF service on and off.
+    255: {"verified": True, "name": "ONVIF", "dp_type": DP_TYPE_BOOL, "entity_type": ENTITY_SWITCH},
     185: {"verified": True, 
         "name": "Doorbell Button",
         "dp_type": DP_TYPE_RAW,
