@@ -998,3 +998,29 @@ def test_the_recorder_repairs_timestamps_a_restream_may_not_have():
     assert args.index("-fflags") < args.index("-i")
     assert args[args.index("-avoid_negative_ts") + 1] == "make_zero"
     assert args.index("-avoid_negative_ts") > args.index("-i")
+
+
+def test_credentials_never_reach_the_log():
+    from custom_components.lsc_tuya_doorbell.video import _redact
+
+    assert _redact("rtsp://admin:hunter2@cam/live") == "rtsp://admin:***@cam/live"
+    assert _redact("rtsp://cam/live") == "rtsp://cam/live"
+    assert _redact("(none)") == "(none)"
+
+
+def test_a_source_that_can_never_be_recorded_is_given_up_on():
+    """A camera that drops out comes back. A source the muxer refuses does not.
+
+    Retrying that forever writes a warning a minute for the life of the
+    installation while providing no snapshots at all, which is worse than
+    saying so once and falling back.
+    """
+    from custom_components.lsc_tuya_doorbell.video import (
+        MAX_CONSECUTIVE_FAILURES,
+        RESTART_BACKOFF,
+    )
+
+    assert MAX_CONSECUTIVE_FAILURES > 1
+    # Giving up must come after the backoff has actually stretched out, so a
+    # brief camera reboot is ridden out rather than treated as fatal.
+    assert MAX_CONSECUTIVE_FAILURES >= len(RESTART_BACKOFF)

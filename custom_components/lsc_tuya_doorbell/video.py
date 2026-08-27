@@ -93,6 +93,15 @@ RESTART_BACKOFF: tuple[float, ...] = (1.0, 2.0, 5.0, 10.0, 30.0, 60.0)
 #: the backoff over from the beginning.
 BACKOFF_RESET_SECONDS = 120.0
 
+# How many restarts in a row before the recorder gives up on this source.
+#
+# A camera that drops out comes back within a couple of attempts. A source that
+# cannot be recorded at all -- a re-encoded restream whose timestamps the
+# segment muxer refuses, say -- never will, and retrying it forever writes a
+# warning every minute for the rest of the installation's life while quietly
+# providing no snapshots.
+MAX_CONSECUTIVE_FAILURES = 6
+
 CLEANUP_INTERVAL = 5.0
 GRAB_TIMEOUT = 15.0
 SEGMENT_GRAB_TIMEOUT = 10.0
@@ -776,6 +785,21 @@ class SnapshotProvider:
             if uptime >= BACKOFF_RESET_SECONDS:
                 attempt = 0
             attempt += 1
+
+            if attempt >= MAX_CONSECUTIVE_FAILURES:
+                _LOGGER.error(
+                    "Snapshot ffmpeg failed %d times in a row on %s and is giving "
+                    "up; falling back to taking a picture on demand. The source "
+                    "cannot be recorded as-is%s. If it is a restream, point this "
+                    "at the plain or video-only one rather than a re-encoded feed "
+                    "meant for something else.",
+                    attempt,
+                    _redact(self._config.source_url or "(none)"),
+                    f": {self._last_stderr}" if self._last_stderr else "",
+                )
+                self._degrade("the video source could not be recorded")
+                return
+
             delay = _backoff_delay(attempt)
             _LOGGER.warning(
                 "Snapshot ffmpeg exited (rc=%s) after %.1f s, restarting in %.0f s%s",
@@ -1103,6 +1127,22 @@ class SnapshotProvider:
             return
         self._logged_once.add(key)
         _LOGGER.log(level, msg, *args)
+
+
+def _redact(url: str) -> str:
+    """A URL safe to put in a log: the credentials become stars.
+
+    Source URLs routinely carry a camera password, and a warning that leaks it
+    is worse than no warning at all.
+    """
+    if "@" not in url or "//" not in url:
+        return url
+    scheme, _, rest = url.partition("//")
+    credentials, _, host = rest.rpartition("@")
+    if not credentials:
+        return url
+    user = credentials.split(":", 1)[0]
+    return f"{scheme}//{user}:***@{host}"
 
 
 def _backoff_delay(attempt: int) -> float:
