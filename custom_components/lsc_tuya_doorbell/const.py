@@ -223,11 +223,11 @@ SD_STATUS_MAP = {
 # Firmware v4 mappings
 KNOWN_DPS_V4: dict[int, dict] = {
     101: {"name": "Record Switch", "dp_type": DP_TYPE_BOOL, "entity_type": ENTITY_SWITCH},
-    # Observed on hardware 2026-08-27 reporting True and False -- a boolean, not
-    # the three-state enum this entry claimed, and night vision is DP 108 on
-    # this device. What it does switch is not established, so it gets a name
-    # that does not pretend otherwise.
-    103: {"name": "DP 103 (switch)", "dp_type": DP_TYPE_BOOL, "entity_type": ENTITY_SWITCH},
+    # Verified on hardware 2026-08-27: flips the image. The table did know about
+    # an image flip -- it had it on DP 134, which actually arms the motion alarm.
+    # Right concept, wrong number, and it called this one a three-state night
+    # vision enum while the device reports a plain boolean.
+    103: {"name": "Image Flip", "dp_type": DP_TYPE_BOOL, "entity_type": ENTITY_SWITCH},
     104: {"name": "Indicator Light", "dp_type": DP_TYPE_BOOL, "entity_type": ENTITY_SWITCH},
     106: {
         "name": "Motion Sensitivity",
