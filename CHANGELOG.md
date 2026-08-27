@@ -1,0 +1,312 @@
+# Changelog
+
+All notable changes to this project are documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [3.0.0] - 2026-08-27
+
+A datapoint number is not a meaning. Version 2.x treated DP 185 as "the doorbell
+button", which is true of one LSC model with one firmware and of nothing else.
+That single assumption is why the integration could connect perfectly and then
+do nothing at all on somebody else's doorbell. 3.0 replaces it with roles the
+device tells you about, adds a way to find those datapoints by watching the
+device, and makes the failures visible that used to be swallowed on the way to
+the user.
+
+### Upgrading
+
+- **A working 2.x installation keeps working.** Existing profiles are migrated
+  when they are loaded: roles are seeded from the old hardcoded numbers, but
+  only for datapoints your device actually reports. Nothing is invented, so an
+  upgrade cannot add entities wired to datapoints that do not exist.
+- **If you never got 2.x to react to the doorbell**, that is the case this
+  release is for. Open **Configure → Live capture (find button and motion
+  datapoints)**, press the doorbell while it listens, keep what it finds, and
+  assign the datapoints to roles. Home Assistant also raises a repair issue when
+  no datapoint claims the doorbell-button role.
+- **Existing automations keep firing.** The device-slug event names
+  (`lsc_tuya_doorbell_button_press_front_door`) still fire, but they are
+  deprecated: the slug comes from the editable device name, so renaming a device
+  silently broke every automation built on one. Move to the stable name
+  (`lsc_tuya_doorbell_button_press`) and filter on `device_id` in the payload.
+- **Minimum Home Assistant version is now 2025.3.**
+- Snapshots keep working as they did without any configuration: the default mode
+  is `on_demand`, which is the 2.x behaviour. `warm` and `buffer` are a
+  deliberate choice, made under **Configure → Snapshot settings**.
+
+### Added
+
+- **Roles.** A device profile now maps `doorbell_button`, `motion` and
+  `record_switch` to whichever datapoint holds them on your device. Everything
+  that used to compare a DP number asks the profile instead. A role nobody
+  claims means that behaviour is off, and a repair issue points at the fix.
+- **Live capture.** A capture session that listens on the open connection while
+  you press the doorbell, trigger motion and walk through the Tuya app. It runs
+  until you stop it, keeps every value each datapoint was seen carrying (capped
+  at 50 per datapoint), and marks the ones that behave like events. Event
+  datapoints cannot be found by querying — they only carry a value at the moment
+  of the event — so this is the only way to find them.
+- **A role assignment step** after both the scan and the capture, and nothing is
+  written to the profile before you have been through it.
+- **Event entities** (`event` platform) with device class `doorbell` and event
+  type `ring`, which is the contract Home Assistant has wanted since 2023.8. The
+  binary sensors stay next to them, because history and existing automations are
+  attached to those.
+- **Stable event names without the device slug**, alongside the deprecated
+  slugged ones.
+- **A snapshot subsystem with four modes** — `off`, `on_demand`, `warm`,
+  `buffer` — configurable buffer path and length, and a look-back compensation
+  of up to 8 seconds for the fact that the device reports a press three to five
+  seconds after it happened. Measured: a per-event ffmpeg grab costs 5.86 s and
+  15.94 s when a second one overlaps it; a continuous ffmpeg writing a rolling
+  JPEG is 1.00 s, flat.
+- **A free-space check on the buffer path** at startup, with a warning naming
+  the path and the shortfall. Docker gives `/dev/shm` 64 MB by default and a
+  minute of buffer costs about 15 MB.
+- **Reauthentication and reconfigure flows.** Tuya rotates the local key
+  whenever a device is re-paired; until now the only way through that was
+  deleting the entry, which renames every entity and breaks every automation.
+- **Protocol version retry.** A failed handshake tries the other supported
+  versions and stores — and logs — the one that worked.
+- **Distinct, actionable setup errors**: wrong local key, unsupported protocol
+  version, decryption failure, protocol error, timeout, discovery failure.
+- **`lsc_tuya_doorbell_snapshot_ready`**, fired when the picture for an earlier
+  event has been stored, and **`lsc_tuya_doorbell_dp_scan_results`** for the
+  scan and monitor services.
+- **Self-describing datapoint definitions**: `device_class`, `value_map` and
+  `carries_image_url`, so the entity platforms read the definition instead of
+  branching on the number.
+- **`network` as an integration dependency**, so subnet detection can read the
+  adapters Home Assistant already knows about, prefix included, instead of
+  guessing a /24.
+
+### Changed
+
+- **Known-datapoint tables are selected by firmware generation** instead of
+  being merged. The union survives only as a last resort for a device whose
+  generation is unknown, and says so.
+- **Discovery goes through the shared manager.** It reads the live cache, only
+  binds a socket when no listener is running, and stays open a few seconds past
+  the first reply because Tuya devices broadcast about every five seconds and
+  not in step — closing on the first answer meant seeing one doorbell out of two.
+- **Adding a device by discovery is a progress step**, so the dialog no longer
+  freezes for ten seconds, and devices you already configured are filtered out
+  and counted.
+- **The protocol version from a discovery broadcast is a hint, not a fact.** It
+  is offered as an editable default with a label saying where it came from,
+  because these devices routinely announce a version they do not speak.
+- **The event never waits for the picture.** Entity callbacks and the event fire
+  at t=0 with `snapshot_url` present and `null`; a tracked background task fills
+  the picture in, rewrites the sensor attributes and fires a second event.
+- **Every event payload has every key**, always, `null` where there is nothing.
+  An automation that has to test whether a field exists breaks on the first
+  event that leaves it out.
+- **The snapshot source is whatever you configured.** The stream URL override is
+  used by the camera, by the snapshot provider and by the continuous ffmpeg
+  alike; passwords in URLs are escaped.
+- **The camera entity appears when there is a stream URL or a still-image URL.**
+  It used to demand an ONVIF password it does not need.
+- **All file work goes through the executor.** Home Assistant's blocking-call
+  detector does not cover `Path.mkdir`, `glob`, `stat` or `unlink`, so the old
+  blocking calls on the event loop never produced a warning.
+- **Presentation rules moved to `entity_meta.py`**, which imports no Home
+  Assistant, so what a datapoint looks like can be tested instead of discovered
+  in production.
+- **Services are registered once for the integration**, with schemas, rather
+  than per config entry and never removed.
+- **Value normalisation reads the datapoint's declared type** instead of
+  guessing from the value, and `raw` is never converted.
+- **Profile deserialisation drops unknown keys** rather than raising, so a
+  profile written by a newer version cannot stop an older one from starting.
+- Minimum Home Assistant version raised to **2025.3**; `hacs.json` now declares
+  the same minimum as the manifest.
+
+### Fixed
+
+- **The scan invented datapoints.** Every scan result had the known event
+  datapoints bolted on afterwards, whether the device reported them or not. On
+  the one model this was written for the guess was right, which is why it looked
+  like it worked; on any other doorbell it produced two sensors wired to
+  datapoints that device never sends, while the real ones were never found.
+- **Auto-discovery fought itself for the UDP ports.** Once any config entry
+  existed the shared listener held ports 6666 and 6667, and the config flow
+  built a second listener that tried to bind them again. Since Python 3.9
+  `create_datagram_endpoint` no longer sets `SO_REUSEADDR`, so that bind could
+  not succeed — it failed, was logged at debug level, and the user was told "no
+  devices found", which points at the network instead of at us. `find_device()`
+  had the same bug: every IP rediscovery hit a dead UDP step, waited out ten
+  seconds and fell back to sweeping the whole subnet over TCP.
+- **Protocol 3.5 never worked.** The 6699 frame carries an 18-byte header with a
+  two-byte field between prefix and sequence number, its own suffix, GCM
+  authentication over the header, a version header before the ciphertext, and a
+  return code *inside* the encrypted payload. This implementation had none of
+  that, and the config flow offered 3.5 anyway. The encoder is now verified
+  against golden frames from tinytuya's own packer and reproduces them byte for
+  byte. (The session handshake against real 3.5 hardware is still untested; see
+  the README.)
+- **A wrong local key was invisible.** It looked exactly like a working install:
+  connected, every entity available, nothing ever happening. Not one bug but a
+  stack of individually reasonable ones — a CRC mismatch logged at debug and the
+  frame processed anyway, an HMAC mismatch likewise, a failed decrypt returning
+  the raw ciphertext, invalid PKCS7 padding (the signature of a wrong key)
+  returning the data unchanged, a JSON parse failure becoming an empty dict. By
+  the time it reached the user there was nothing left to see. All of it now
+  reaches the log with something to act on, throttled per kind, with a note when
+  it recovers. The device's own HMAC in the 3.4/3.5 handshake is verified too,
+  so a successful connect really does prove the key.
+- **Losing the heartbeat killed the connection without reconnecting**, because
+  the disconnect path skipped the callbacks that trigger recovery. There are now
+  two disconnects: a quiet one for unload, and a forced one that says why and
+  tells everything downstream. The read loop also gives up on a connection that
+  has been silent for ninety seconds.
+- **A frame claiming a nonsensical length stalled reassembly for good** — socket
+  open, read loop running, nothing dispatched ever again, buffer growing without
+  bound. Lengths are bounded per format, the suffix is checked at the computed
+  boundary, and a desynchronised stream resynchronises instead of waiting
+  forever.
+- **Notifications showed the previous caller.** The binary sensor fired at once
+  and carried `last_snapshot_url` with it, but that variable was only updated
+  when a grab returned, so the picture in the notification was the one before.
+  The press now fires with a `null` URL and the picture is delivered afterwards
+  through `snapshot_ready` and updated attributes.
+- **A doorbell press could disappear entirely.** Two background tasks ran on
+  `asyncio.ensure_future` with nothing holding a reference, and the event was
+  attached to one of them; a garbage collection at the wrong moment swallowed
+  the whole press. Every background task is now created through the config entry
+  and tracked.
+- **Entities did not notice a disconnect.** Only the Connected sensor ever
+  subscribed to connection changes; switches, selects, numbers, sensors and the
+  camera kept showing their last value until a datapoint update arrived, which
+  on an offline device is never. The integration reported a house full of
+  working entities attached to a doorbell that had been unreachable for hours.
+- **The v5 table silently overwrote the v4 table.** They genuinely disagree
+  about DP 109, 110 and 134 — "SD Card Status" against "Basic OSD", "Vision
+  Flip" against "Chime Switch" — and the merged table let v5 win every conflict,
+  so v4 devices had been mislabelled all along. The disagreement is now pinned
+  by a test.
+- **An IP change cancelled its own recovery.** The new address was written
+  before the connection was established, and the resulting config-entry reload
+  tore down the task doing the reconnecting. It is written after the connection
+  succeeds, and the reload it triggers is absorbed.
+- **Choosing an already-configured device produced "an unexpected error
+  occurred" forever.** `AbortFlow` inherits from `Exception` and was swallowed by
+  a broad handler, so the correct "already configured" message was unreachable.
+- **The scan saved before it asked.** Unticking a datapoint on the results screen
+  still left an entity behind, and ticking one replaced its full definition with
+  a bare stub, stripping the options, bounds and event flag the scan had just
+  learned. The screen offering a choice was misleading in both directions.
+- **The event counter existed twice** — once in the hub, once restored by the
+  sensor — and the two drifted apart on every restart. There is one now, and the
+  sensor feeds its restored value back on startup.
+- **Device classes were assigned by datapoint number.** Every binary datapoint
+  that was not 185 or 115 was labelled a connectivity sensor, which is simply
+  untrue. A device class now comes from the definition, then from the role, and
+  otherwise stays unset — no class at all is honest, a wrong one is not.
+- **The SD card sensor identified itself by looking for "sd card" inside its own
+  display name**, which broke the moment anyone renamed it.
+- **Two different events shared one name.** `dp_discovered` was fired by the hub
+  and by the service handler with different payloads, so an automation listening
+  for it got whichever shape happened to arrive. The service now fires
+  `dp_scan_results`.
+- **`event_reset_timeout` was never read**, so changing it did nothing at all.
+  It is read now, clamped to 1–300 seconds, and an unreadable value is logged
+  rather than ignored.
+- **Snapshots opened a fresh RTSP session per press**, even when a stream URL
+  override pointed at a restreamer — which is how a camera that tolerates a
+  handful of sessions ended up with four, and why a second grab took 15.94 s.
+- **A `raw` payload made of digits was converted to an integer** by value
+  guessing, after which it could no longer be decoded.
+- **Subnet detection asked an outside address for its route and assumed a /24.**
+  It reads Home Assistant's adapters now, prefix included; the old probe is a
+  last resort, runs off the event loop, and says out loud that the /24 is a
+  guess. A range larger than 1024 hosts is refused rather than turned into 65k
+  probes.
+- **The `discover_devices` service used the private UDP listener** and therefore
+  hit the same port conflict as the config flow: it structurally found nothing.
+
+### Removed
+
+- Hardcoded datapoint numbers as behaviour. `DP_DOORBELL_BUTTON`,
+  `DP_MOTION_DETECTION` and `DP_RECORD_SWITCH` survive only as seeds for
+  proposing roles.
+- Automatic inclusion of the "known" event datapoints in scan results.
+- Per-event ffmpeg processes as the only way to get a picture; the snapshot
+  provider owns that now, and `hub.py` no longer captures or cleans up
+  snapshots itself.
+- `domains` and `iot_class` from `hacs.json` — HACS rejects keys outside its
+  schema, and neither was one of them.
+
+## Earlier releases
+
+Taken from the release notes in the 2.x README. No release dates were recorded
+for these versions.
+
+### 2.8.0 — Connected binary sensor, configurable snapshot triggers, improved labels
+
+- New **Connected** diagnostic binary sensor (`device_class: connectivity`)
+  reflecting real-time connection state.
+- **Snapshot trigger DPs** made configurable in Camera Settings as a
+  multi-select of discovered datapoints, instead of being hardcoded to DP 185.
+- Clearer `force_record_on` label explaining the Tuya quirk where ONVIF and
+  recording are randomly disabled.
+
+### 2.7.0 — Auto-recovery for the record switch (DP 101)
+
+- New **Auto-enable Record Switch** option that forces DP 101 back on when the
+  device disables it, which breaks ONVIF/RTSP.
+- Two-second delay before re-enabling, to avoid rapid toggle loops.
+
+### 2.6.2 — Device identity validation fix
+
+- v3.3 now requires actual DP data, not just a heartbeat, to confirm the local
+  key matches.
+- v3.4/v3.5 rely on session key negotiation during connect.
+
+### 2.6.0 — DP scan reliability and UI improvements
+
+- DP scan resumes after a disconnect: waits up to 30 s for reconnect and
+  continues where it stopped, up to 3 retries.
+- Event DPs (185, 115) automatically included in scan results — since replaced,
+  see 3.0.0.
+- Scan results survive closing the dialog; force-rescan checkbox added.
+- Fixed a `progress_done` race and a `vol.Ensure` crash in the scan results.
+- Fewer device22 query retries; cleaner disconnect logging; UDP decrypt noise
+  from other Tuya devices suppressed.
+
+### 2.5.1 — DP scanning fixes and ONVIF password persistence
+
+- Fixed the ONVIF password being lost on reboot or on saving options.
+- Fixed the DP scan hanging: reverted concurrent scanning in favour of
+  sequential larger batches with a delay.
+- Fixed a `CancelledError` crash in `query_dps` when the device disconnected
+  during setup.
+
+### 2.5.0 — DP scanning overhaul
+
+- Real-time scan progress showing the current batch, found count and DP IDs.
+- 120-second scan timeout.
+- Merge or replace choice for scan results.
+- Early abort when the device disconnects during a scan.
+
+### 2.4.0 — HACS and packaging update
+
+- Updated the HACS manifest.
+
+### 2.3.0 — Custom DPs, video stream and snapshots
+
+- Custom DP IDs can be added from the options UI.
+- RTSP camera entity.
+- Automatic snapshot capture on doorbell press.
+- Fixed the config reload issue after saving settings.
+
+### 2.0.0 — Complete rewrite
+
+- Rebuilt with a clean async architecture.
+- Tuya protocol 3.3, 3.4 and 3.5 with session key negotiation.
+- Automatic DP discovery and dynamic entity creation.
+- Heartbeat monitoring and exponential backoff reconnection.
+- No external dependencies beyond `cryptography`.
+
+[3.0.0]: https://github.com/jurgenmahn/ha_tuya_doorbell/releases/tag/v3.0.0
