@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import Any, Iterable, Mapping, Sequence
 
 import voluptuous as vol
@@ -69,6 +70,7 @@ from .const import (
     MAX_BUFFER_SECONDS,
     MAX_SNAPSHOT_DELAY_MS,
     MIN_BUFFER_SECONDS,
+    ROLE_RECORD_SWITCH,
     ROLES,
 )
 from .discovery import DiscoveredDevice, async_discover_devices
@@ -117,8 +119,10 @@ MENU_SNAPSHOTS = "snapshot_settings"
 MENU_DATAPOINTS = "dp_list"
 MENU_SCAN = "dp_scan_mode"
 MENU_CAPTURE = "live_capture"
+MENU_CAPTURE_REVIEW = "capture_review"
 MENU_ROLES = "assign_roles"
 MENU_FIRMWARE = "firmware_generation"
+MENU_FINISH = "finish"
 
 # Menu option ids double as step ids: Home Assistant dispatches a chosen menu
 # entry straight to async_step_<option>.
@@ -129,9 +133,105 @@ MENU_OPTIONS: tuple[str, ...] = (
     MENU_DATAPOINTS,
     MENU_SCAN,
     MENU_CAPTURE,
+    MENU_CAPTURE_REVIEW,
     MENU_ROLES,
     MENU_FIRMWARE,
+    MENU_FINISH,
 )
+
+# --- Navigation ------------------------------------------------------------
+#
+# Home Assistant has no conditional fields inside a form. A schema is built
+# once on the server, handed to the frontend as one FORM result, and held there
+# until submit; nothing pushes an update into an open dialog
+# (``async_notify_flow_changed`` only re-renders a SHOW_PROGRESS step, see
+# ``data_entry_flow.py``). "Show field X only when Y is chosen" is therefore
+# always more than one step: ask the question, then show a follow-up carrying
+# only the fields that apply.
+#
+# It has no back button either. A sub-step that wants to be leavable has to
+# offer the way out itself, which is what this checkbox is. It is read before
+# anything is written, so going back really does change nothing.
+NAV_BACK = "back"
+
+# The menu entry that ends the options flow. An options flow has to finish
+# through async_create_entry, but the sub-steps do not have to be the ones
+# doing it -- see LscTuyaDoorbellOptionsFlow._async_save_options.
+NAV_FINISH = MENU_FINISH
+
+
+def _with_back(schema: dict[Any, Any]) -> dict[Any, Any]:
+    """Append the "back to the menu" escape to a sub-step schema."""
+    schema[vol.Optional(NAV_BACK, default=False)] = bool
+    return schema
+
+
+def going_back(user_input: Mapping[str, Any] | None) -> bool:
+    """Whether the user asked to leave this step without saving anything."""
+    return bool(user_input and user_input.get(NAV_BACK))
+
+
+# --- Where the video comes from --------------------------------------------
+
+VIDEO_SOURCE_DIRECT = "direct"
+VIDEO_SOURCE_RESTREAM = "restream"
+VIDEO_SOURCES: tuple[str, ...] = (VIDEO_SOURCE_DIRECT, VIDEO_SOURCE_RESTREAM)
+
+#: Form field only. The stored options say which route is in use all by
+#: themselves, so there is nothing extra to persist.
+CONF_VIDEO_SOURCE = "video_source"
+
+
+def video_source_of(options: Mapping[str, Any]) -> str:
+    """Which of the two routes the stored options already describe.
+
+    A stream URL override is only ever set by someone who put a restreamer in
+    front of the camera, so its presence is the answer -- no extra option to
+    store, and nothing to keep in sync with the settings it describes.
+    """
+    if str(options.get(CONF_STREAM_URL_OVERRIDE) or "").strip():
+        return VIDEO_SOURCE_RESTREAM
+    return VIDEO_SOURCE_DIRECT
+
+
+# --- Which snapshot settings a mode actually uses --------------------------
+
+
+def snapshot_fields_for(mode: str) -> tuple[str, ...]:
+    """The settings that mean something in this snapshot mode.
+
+    Offering the buffer directory to someone running 'on demand' is offering a
+    setting that is read and then ignored; the buffer is the only mode that
+    keeps video around, and 'off' takes no pictures at all so it has nothing to
+    be triggered by.
+    """
+    if mode == video.MODE_OFF:
+        return ()
+    if mode == video.MODE_BUFFER:
+        return (
+            CONF_SNAPSHOT_TRIGGER_DPS,
+            CONF_SNAPSHOT_BUFFER_PATH,
+            CONF_SNAPSHOT_BUFFER_SECONDS,
+            CONF_SNAPSHOT_DELAY_MS,
+        )
+    return (CONF_SNAPSHOT_TRIGGER_DPS,)
+
+
+# --- Live capture pacing ---------------------------------------------------
+
+#: How long each refresh of the live-capture screen waits. A progress step
+#: resumes when its task finishes, so this is the redraw interval.
+LIVE_CAPTURE_TICK_SECONDS = 2.0
+
+#: Stop by ourselves once the device has gone quiet for this long. Only starts
+#: counting after something has actually arrived: someone who opened the
+#: capture and is still walking to the front door has reported nothing yet, and
+#: cutting them off would be exactly the wrong moment.
+LIVE_CAPTURE_IDLE_SECONDS = 20.0
+
+#: And stop regardless after this long, so a forgotten session does not sit on
+#: the connection forever.
+LIVE_CAPTURE_MAX_SECONDS = 300.0
 
 # Which diagnosis wins when several attempts failed for different reasons.
 # A rejected key is the most actionable thing we can tell someone, so it is
@@ -265,6 +365,124 @@ def capture_summary(found: Sequence[Any]) -> str:
         f"DP {dp.dp_id}" + (" ⟳" if getattr(dp, "looks_like_an_event", False) else "")
         for dp in found
     )
+
+
+def safe_placeholder(text: str) -> str:
+    """Make a string safe to hand to Home Assistant as a description placeholder.
+
+    Placeholders are substituted by the frontend's message formatter, which
+    treats ``{`` and ``}`` as its own syntax. Datapoint values are whatever the
+    device felt like sending -- JSON payloads included -- so a raw value can
+    blank out the entire screen it was meant to explain.
+    """
+    return text.replace("{", "(").replace("}", ")")
+
+
+def short_value(value: Any, limit: int = 40) -> str:
+    """One datapoint value, short enough to sit in a list of them."""
+    text = repr(value)
+    if len(text) > limit:
+        text = text[: limit - 1] + "…"
+    return safe_placeholder(text)
+
+
+def last_reported_dps(capture: Any, found: Sequence[Any]) -> set[int]:
+    """The datapoints that moved most recently, so the screen can point at them.
+
+    While hunting for the doorbell button you press it several times, and a
+    press often lands several datapoints in one status frame. Without a marker
+    a list of a dozen datapoints says nothing about which one just answered.
+
+    ``LiveCapture`` has no "last seen" field yet; until it grows one this is
+    derived from the observation timestamps, which gives the same answer
+    because a whole frame is recorded with a single timestamp.
+    """
+    claimed = getattr(capture, "last_dp_ids", None)
+    if claimed:
+        return {int(dp_id) for dp_id in claimed}
+    claimed_one = getattr(capture, "last_dp_id", None)
+    if isinstance(claimed_one, int):
+        return {claimed_one}
+
+    latest: float | None = None
+    for dp in found:
+        observations = getattr(dp, "observations", None) or []
+        if not observations:
+            continue
+        at = observations[-1].at
+        if latest is None or at > latest:
+            latest = at
+    if latest is None:
+        return set()
+    return {
+        dp.dp_id
+        for dp in found
+        if (getattr(dp, "observations", None) or [])
+        and dp.observations[-1].at == latest
+    }
+
+
+def capture_detail(found: Sequence[Any], just_now: Iterable[int] = ()) -> str:
+    """What every captured datapoint actually carried, newest activity marked.
+
+    The numbers alone do not identify anything. What a datapoint carried is the
+    evidence: a button reports a fresh payload per press, a setting reports one
+    value and stays there, and a counter climbs.
+    """
+    if not found:
+        return (
+            "Nothing reported yet — press the doorbell, or toggle something in "
+            "the Tuya app, to make the device say something."
+        )
+
+    marked = set(just_now)
+    lines: list[str] = []
+    for dp in found:
+        values = getattr(dp, "distinct_values", None) or []
+        shown = ", ".join(short_value(value) for value in values[:6])
+        if len(values) > 6:
+            shown += ", …"
+        name = safe_placeholder(str(getattr(dp, "name", "") or dp.dp_type))
+        count = len(getattr(dp, "observations", None) or [])
+        line = f"- **DP {dp.dp_id}** ({name}) — {count}×: {shown or '—'}"
+        if getattr(dp, "looks_like_an_event", False):
+            line += " ⟳"
+        if dp.dp_id in marked:
+            line += "  ← just now"
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def capture_idle_seconds(found: Sequence[Any], now: float) -> float | None:
+    """Seconds since the last thing arrived, or None when nothing has yet.
+
+    None is not zero: it is the difference between "the device has gone quiet"
+    and "the user has not reached the doorbell yet", and only the first is a
+    reason to stop.
+    """
+    latest: float | None = None
+    for dp in found:
+        observations = getattr(dp, "observations", None) or []
+        if not observations:
+            continue
+        at = observations[-1].at
+        if latest is None or at > latest:
+            latest = at
+    if latest is None:
+        return None
+    return max(0.0, now - latest)
+
+
+def capture_should_stop(
+    found: Sequence[Any], elapsed: float, now: float
+) -> str | None:
+    """Why a capture should end by itself, or None to keep it running."""
+    if elapsed >= LIVE_CAPTURE_MAX_SECONDS:
+        return "time_limit"
+    idle = capture_idle_seconds(found, now)
+    if idle is not None and idle >= LIVE_CAPTURE_IDLE_SECONDS:
+        return "gone_quiet"
+    return None
 
 
 def role_choice_options(
@@ -782,10 +1000,36 @@ class LscTuyaDoorbellOptionsFlow(OptionsFlow):
         # Datapoints the user picked, carried into the role assignment step.
         self._pending_dps: list[Any] = []
         self._pending_clear_existing: bool = False
+        # Answers to a "which kind is this?" step, carried into its follow-up.
+        self._pending_video_source: str = VIDEO_SOURCE_DIRECT
+        self._pending_camera: dict[str, Any] = {}
+        self._pending_snapshot_mode: str | None = None
 
     def _get_hub(self):
         """Get the DeviceHub for this config entry."""
+        if self.hass is None:
+            return None
         return self.hass.data.get(DOMAIN, {}).get(self._config_entry.entry_id)
+
+    @callback
+    def async_remove(self) -> None:
+        """Clean up when the dialog goes away.
+
+        Closing the dialog is the documented way to end a live capture, so this
+        is the normal path and not an edge case. What the session saw lives on
+        the hub, not in this flow, so stopping it here loses nothing: "Review
+        capture results" picks it up again afterwards.
+
+        ``LiveCapture.stop()`` only unregisters a listener, so there is nothing
+        to await -- which matters, because this hook is a callback and cannot
+        await anything. ``hub.async_stop_live_capture()`` is a coroutine around
+        that same call and would need a task scheduled for no benefit at all.
+        """
+        hub = self._get_hub()
+        capture = getattr(hub, "live_capture", None) if hub is not None else None
+        if capture is not None and capture.running:
+            _LOGGER.debug("Options dialog closed; stopping the live capture")
+            capture.stop()
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
@@ -797,12 +1041,43 @@ class LscTuyaDoorbellOptionsFlow(OptionsFlow):
         """
         return self.async_show_menu(step_id="init", menu_options=list(MENU_OPTIONS))
 
+    async def async_step_finish(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Close the dialog.
+
+        Everything a sub-step changed was already written when it was submitted,
+        so this hands back the options exactly as they stand: Home Assistant
+        stores them again, sees no difference, and does not reload.
+        """
+        return self.async_create_entry(title="", data=dict(self._config_entry.options))
+
+    async def _async_save_options(
+        self, new_options: Mapping[str, Any]
+    ) -> ConfigFlowResult:
+        """Store options and stay in the flow, instead of closing the dialog.
+
+        An options flow saves by ending: ``async_create_entry`` hands its data
+        to ``OptionsFlowManager.async_finish_flow``, which does nothing more
+        than ``async_update_entry(entry, options=...)``. Calling that ourselves
+        is the same write without the ending, which is what lets editing three
+        datapoints in a row be three submits instead of three trips through the
+        integration page. The flow still ends properly, via the menu's "Close".
+        """
+        self.hass.config_entries.async_update_entry(
+            self._config_entry, options=dict(new_options)
+        )
+        return await self.async_step_init()
+
     # --- Connection ---
 
     async def async_step_connection(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Connection settings (host, port, protocol)."""
+        if going_back(user_input):
+            return await self.async_step_init()
+
         if user_input is not None:
             new_data = dict(self._config_entry.data)
             for key in (CONF_HOST, CONF_PORT, CONF_PROTOCOL_VERSION):
@@ -812,24 +1087,28 @@ class LscTuyaDoorbellOptionsFlow(OptionsFlow):
             self.hass.config_entries.async_update_entry(
                 self._config_entry, data=new_data
             )
-            return self.async_create_entry(title="", data=self._config_entry.options)
+            return await self.async_step_init()
 
         current = self._config_entry.data
         return self.async_show_form(
             step_id="connection",
             data_schema=vol.Schema(
-                {
-                    vol.Optional(CONF_HOST, default=current.get(CONF_HOST, "")): str,
-                    vol.Optional(
-                        CONF_PORT, default=current.get(CONF_PORT, DEFAULT_PORT)
-                    ): vol.Coerce(int),
-                    vol.Optional(
-                        CONF_PROTOCOL_VERSION,
-                        default=current.get(
-                            CONF_PROTOCOL_VERSION, DEFAULT_PROTOCOL_VERSION
-                        ),
-                    ): vol.In(list(SUPPORTED_PROTOCOL_VERSIONS)),
-                }
+                _with_back(
+                    {
+                        vol.Optional(
+                            CONF_HOST, default=current.get(CONF_HOST, "")
+                        ): str,
+                        vol.Optional(
+                            CONF_PORT, default=current.get(CONF_PORT, DEFAULT_PORT)
+                        ): vol.Coerce(int),
+                        vol.Optional(
+                            CONF_PROTOCOL_VERSION,
+                            default=current.get(
+                                CONF_PROTOCOL_VERSION, DEFAULT_PROTOCOL_VERSION
+                            ),
+                        ): vol.In(list(SUPPORTED_PROTOCOL_VERSIONS)),
+                    }
+                )
             ),
         )
 
@@ -838,14 +1117,90 @@ class LscTuyaDoorbellOptionsFlow(OptionsFlow):
     async def async_step_camera_settings(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Camera / RTSP settings."""
+        """Ask where the video comes from, before asking anything about it.
+
+        Host/port/path and a stream URL override describe two different setups
+        and only one of them can win, but the old single form offered all of
+        them at once -- so it was possible to fill in an RTSP path, save, and
+        wonder why an override entered months earlier was still being used.
+        Asking first means the follow-up can show only what applies.
+        """
+        opts = self._config_entry.options
+
+        if going_back(user_input):
+            return await self.async_step_init()
+
+        if user_input is not None:
+            self._pending_video_source = user_input.get(
+                CONF_VIDEO_SOURCE, VIDEO_SOURCE_DIRECT
+            )
+            # Settings that apply either way, carried into the follow-up so the
+            # whole screen is saved in one write instead of two reloads.
+            self._pending_camera = {
+                CONF_SNAPSHOT_PATH: user_input.get(
+                    CONF_SNAPSHOT_PATH, DEFAULT_SNAPSHOT_PATH
+                ),
+                CONF_FORCE_RECORD_ON: user_input.get(CONF_FORCE_RECORD_ON, False),
+            }
+            if self._pending_video_source == VIDEO_SOURCE_RESTREAM:
+                return await self.async_step_camera_restream()
+            return await self.async_step_camera_direct()
+
+        return self.async_show_form(
+            step_id="camera_settings",
+            data_schema=vol.Schema(
+                _with_back(
+                    {
+                        vol.Required(
+                            CONF_VIDEO_SOURCE, default=video_source_of(opts)
+                        ): _select(VIDEO_SOURCES, "video_source"),
+                        vol.Optional(
+                            CONF_SNAPSHOT_PATH,
+                            default=opts.get(
+                                CONF_SNAPSHOT_PATH, DEFAULT_SNAPSHOT_PATH
+                            ),
+                        ): str,
+                        vol.Optional(
+                            CONF_FORCE_RECORD_ON,
+                            default=opts.get(CONF_FORCE_RECORD_ON, False),
+                        ): bool,
+                    }
+                )
+            ),
+            description_placeholders={
+                "record_role": self._role_state(ROLE_RECORD_SWITCH),
+            },
+        )
+
+    def _role_state(self, role: str) -> str:
+        """Whether a role is pointed at a datapoint, in words.
+
+        'Force recording on' does nothing at all without the record_switch
+        role, and there is no way to tell from the checkbox itself.
+        """
+        hub = self._get_hub()
+        profile = getattr(hub, "profile", None) if hub is not None else None
+        claimed = (getattr(profile, "roles", None) or {}).get(role)
+        if claimed is None:
+            return (
+                "no datapoint has the 'record switch' role yet, so this "
+                "setting will do nothing"
+            )
+        return f"the 'record switch' role points at DP {claimed}"
+
+    async def async_step_camera_direct(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """The camera's own RTSP server: host from the connection, plus port and path."""
         opts = self._config_entry.options
         data = self._config_entry.data
-        hub = self._get_hub()
-        trigger_options = snapshot_trigger_options(hub.profile if hub else None)
+
+        if going_back(user_input):
+            return await self.async_step_init()
 
         if user_input is not None:
             new_options = dict(opts)
+            new_options.update(self._pending_camera)
             new_options[CONF_ONVIF_USERNAME] = user_input.get(
                 CONF_ONVIF_USERNAME, DEFAULT_ONVIF_USERNAME
             )
@@ -856,87 +1211,98 @@ class LscTuyaDoorbellOptionsFlow(OptionsFlow):
             new_options[CONF_RTSP_PATH] = user_input.get(
                 CONF_RTSP_PATH, DEFAULT_RTSP_PATH
             )
-            new_options[CONF_STREAM_URL_OVERRIDE] = user_input.get(
-                CONF_STREAM_URL_OVERRIDE, ""
-            ).strip()
             new_options[CONF_STILL_IMAGE_URL_OVERRIDE] = user_input.get(
                 CONF_STILL_IMAGE_URL_OVERRIDE, ""
             ).strip()
-            new_options[CONF_SNAPSHOT_PATH] = user_input.get(
-                CONF_SNAPSHOT_PATH, DEFAULT_SNAPSHOT_PATH
-            )
-            new_options[CONF_FORCE_RECORD_ON] = user_input.get(
-                CONF_FORCE_RECORD_ON, False
-            )
-            # Absent because there was nothing to choose from: keep what is
-            # stored rather than silently clearing the user's triggers.
-            if trigger_options:
-                new_options[CONF_SNAPSHOT_TRIGGER_DPS] = user_input.get(
-                    CONF_SNAPSHOT_TRIGGER_DPS, []
-                )
-            return self.async_create_entry(title="", data=new_options)
-
-        current_triggers = opts.get(CONF_SNAPSHOT_TRIGGER_DPS, [])
-        if isinstance(current_triggers, str):
-            # Legacy format: a comma-separated string.
-            current_triggers = [
-                x.strip() for x in current_triggers.split(",") if x.strip()
-            ]
-        current_triggers = [t for t in current_triggers if t in trigger_options]
-
-        schema: dict[Any, Any] = {
-            vol.Optional(
-                CONF_ONVIF_USERNAME,
-                default=opts.get(CONF_ONVIF_USERNAME, DEFAULT_ONVIF_USERNAME),
-            ): str,
-            vol.Optional(
-                CONF_ONVIF_PASSWORD,
-                default=opts.get(
-                    CONF_ONVIF_PASSWORD, data.get(CONF_ONVIF_PASSWORD, "")
-                ),
-            ): str,
-            vol.Optional(
-                CONF_RTSP_PORT, default=opts.get(CONF_RTSP_PORT, DEFAULT_RTSP_PORT)
-            ): vol.Coerce(int),
-            vol.Optional(
-                CONF_RTSP_PATH, default=opts.get(CONF_RTSP_PATH, DEFAULT_RTSP_PATH)
-            ): str,
-            vol.Optional(
-                CONF_STREAM_URL_OVERRIDE,
-                default=opts.get(CONF_STREAM_URL_OVERRIDE, ""),
-            ): str,
-            vol.Optional(
-                CONF_STILL_IMAGE_URL_OVERRIDE,
-                default=opts.get(CONF_STILL_IMAGE_URL_OVERRIDE, ""),
-            ): str,
-            vol.Optional(
-                CONF_SNAPSHOT_PATH,
-                default=opts.get(CONF_SNAPSHOT_PATH, DEFAULT_SNAPSHOT_PATH),
-            ): str,
-            vol.Optional(
-                CONF_FORCE_RECORD_ON,
-                default=opts.get(CONF_FORCE_RECORD_ON, False),
-            ): bool,
-        }
-        if trigger_options:
-            schema[
-                vol.Optional(CONF_SNAPSHOT_TRIGGER_DPS, default=current_triggers)
-            ] = cv.multi_select(trigger_options)
+            # Choosing this route is choosing against the other one. Leaving a
+            # stream override in place would keep it winning over everything
+            # just entered here, which is the confusion this split exists for.
+            new_options[CONF_STREAM_URL_OVERRIDE] = ""
+            return await self._async_save_options(new_options)
 
         return self.async_show_form(
-            step_id="camera_settings",
-            data_schema=vol.Schema(schema),
-            description_placeholders={
-                "trigger_hint": (
-                    ""
-                    if trigger_options
-                    else (
-                        "No datapoints are known for this device yet, so there is "
-                        "nothing to trigger a snapshot. Run 'Scan for datapoints' "
-                        "or 'Live capture' first."
-                    )
+            step_id="camera_direct",
+            data_schema=vol.Schema(
+                _with_back(
+                    {
+                        vol.Optional(
+                            CONF_ONVIF_USERNAME,
+                            default=opts.get(
+                                CONF_ONVIF_USERNAME, DEFAULT_ONVIF_USERNAME
+                            ),
+                        ): str,
+                        vol.Optional(
+                            CONF_ONVIF_PASSWORD,
+                            default=opts.get(
+                                CONF_ONVIF_PASSWORD, data.get(CONF_ONVIF_PASSWORD, "")
+                            ),
+                        ): str,
+                        vol.Optional(
+                            CONF_RTSP_PORT,
+                            default=opts.get(CONF_RTSP_PORT, DEFAULT_RTSP_PORT),
+                        ): vol.Coerce(int),
+                        vol.Optional(
+                            CONF_RTSP_PATH,
+                            default=opts.get(CONF_RTSP_PATH, DEFAULT_RTSP_PATH),
+                        ): str,
+                        vol.Optional(
+                            CONF_STILL_IMAGE_URL_OVERRIDE,
+                            default=opts.get(CONF_STILL_IMAGE_URL_OVERRIDE, ""),
+                        ): str,
+                    }
                 )
-            },
+            ),
+            description_placeholders={"host": data.get(CONF_HOST, "?")},
+        )
+
+    async def async_step_camera_restream(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """A restreamer in front of the camera: one URL replaces host, port and path."""
+        opts = self._config_entry.options
+        errors: dict[str, str] = {}
+
+        if going_back(user_input):
+            return await self.async_step_init()
+
+        if user_input is not None:
+            stream_url = user_input.get(CONF_STREAM_URL_OVERRIDE, "").strip()
+            if not stream_url:
+                # Saving an empty override here would silently put the device
+                # back on the direct route it was just moved off.
+                errors[CONF_STREAM_URL_OVERRIDE] = "stream_url_required"
+            else:
+                new_options = dict(opts)
+                new_options.update(self._pending_camera)
+                new_options[CONF_STREAM_URL_OVERRIDE] = stream_url
+                new_options[CONF_STILL_IMAGE_URL_OVERRIDE] = user_input.get(
+                    CONF_STILL_IMAGE_URL_OVERRIDE, ""
+                ).strip()
+                return await self._async_save_options(new_options)
+
+        return self.async_show_form(
+            step_id="camera_restream",
+            data_schema=vol.Schema(
+                _with_back(
+                    {
+                        vol.Optional(
+                            CONF_STREAM_URL_OVERRIDE,
+                            default=(user_input or {}).get(
+                                CONF_STREAM_URL_OVERRIDE,
+                                opts.get(CONF_STREAM_URL_OVERRIDE, ""),
+                            ),
+                        ): str,
+                        vol.Optional(
+                            CONF_STILL_IMAGE_URL_OVERRIDE,
+                            default=(user_input or {}).get(
+                                CONF_STILL_IMAGE_URL_OVERRIDE,
+                                opts.get(CONF_STILL_IMAGE_URL_OVERRIDE, ""),
+                            ),
+                        ): str,
+                    }
+                )
+            ),
+            errors=errors,
         )
 
     # --- Snapshots ---
@@ -944,76 +1310,171 @@ class LscTuyaDoorbellOptionsFlow(OptionsFlow):
     async def async_step_snapshot_settings(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """How snapshots are produced, and how far back they may reach."""
+        """Ask which snapshot mode applies, before asking about the mode's settings.
+
+        The four modes need different things -- 'off' needs nothing, only
+        'buffer' keeps video around -- and showing all of them at once meant
+        offering a buffer directory to someone who would never have a buffer.
+        """
         opts = self._config_entry.options
 
+        if going_back(user_input):
+            return await self.async_step_init()
+
         if user_input is not None:
-            new_options = dict(opts)
-            new_options[CONF_SNAPSHOT_MODE] = user_input[CONF_SNAPSHOT_MODE]
-            new_options[CONF_SNAPSHOT_BUFFER_PATH] = user_input[
-                CONF_SNAPSHOT_BUFFER_PATH
-            ].strip()
-            new_options[CONF_SNAPSHOT_BUFFER_SECONDS] = int(
-                user_input[CONF_SNAPSHOT_BUFFER_SECONDS]
-            )
-            new_options[CONF_SNAPSHOT_DELAY_MS] = int(
-                user_input[CONF_SNAPSHOT_DELAY_MS]
-            )
-            return self.async_create_entry(title="", data=new_options)
+            mode = user_input[CONF_SNAPSHOT_MODE]
+            if not snapshot_fields_for(mode):
+                # 'off' has nothing left to ask, so do not invent a screen.
+                new_options = dict(opts)
+                new_options[CONF_SNAPSHOT_MODE] = mode
+                return await self._async_save_options(new_options)
+            self._pending_snapshot_mode = mode
+            return await self.async_step_snapshot_options()
 
         return self.async_show_form(
             step_id="snapshot_settings",
             data_schema=vol.Schema(
-                {
-                    vol.Required(
-                        CONF_SNAPSHOT_MODE,
-                        default=opts.get(
-                            CONF_SNAPSHOT_MODE, video.DEFAULT_SNAPSHOT_MODE
-                        ),
-                    ): _select(video.SNAPSHOT_MODES, "snapshot_mode"),
-                    vol.Required(
-                        CONF_SNAPSHOT_BUFFER_PATH,
-                        default=opts.get(
-                            CONF_SNAPSHOT_BUFFER_PATH, video.DEFAULT_BUFFER_PATH
-                        ),
-                    ): str,
-                    vol.Required(
-                        CONF_SNAPSHOT_BUFFER_SECONDS,
-                        default=opts.get(
-                            CONF_SNAPSHOT_BUFFER_SECONDS,
-                            video.DEFAULT_BUFFER_SECONDS,
-                        ),
-                    ): NumberSelector(
-                        NumberSelectorConfig(
-                            min=MIN_BUFFER_SECONDS,
-                            max=MAX_BUFFER_SECONDS,
-                            step=5,
-                            mode=NumberSelectorMode.BOX,
-                            unit_of_measurement="s",
-                        )
-                    ),
-                    vol.Required(
-                        CONF_SNAPSHOT_DELAY_MS,
-                        default=opts.get(
-                            CONF_SNAPSHOT_DELAY_MS, video.DEFAULT_SNAPSHOT_DELAY_MS
-                        ),
-                    ): NumberSelector(
-                        NumberSelectorConfig(
-                            min=0,
-                            max=MAX_SNAPSHOT_DELAY_MS,
-                            step=100,
-                            mode=NumberSelectorMode.BOX,
-                            unit_of_measurement="ms",
-                        )
-                    ),
-                }
+                _with_back(
+                    {
+                        vol.Required(
+                            CONF_SNAPSHOT_MODE,
+                            default=opts.get(
+                                CONF_SNAPSHOT_MODE, video.DEFAULT_SNAPSHOT_MODE
+                            ),
+                        ): _select(video.SNAPSHOT_MODES, "snapshot_mode"),
+                    }
+                )
             ),
+        )
+
+    async def async_step_snapshot_options(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """The settings the chosen snapshot mode actually reads."""
+        opts = self._config_entry.options
+        mode = self._pending_snapshot_mode
+        if mode is None:
+            # Nothing was chosen, so there is nothing to configure. Reachable
+            # only by URL-poking a step id; ask the question again.
+            return await self.async_step_snapshot_settings()
+
+        fields = snapshot_fields_for(mode)
+        hub = self._get_hub()
+        trigger_options = snapshot_trigger_options(
+            getattr(hub, "profile", None) if hub is not None else None
+        )
+
+        if going_back(user_input):
+            return await self.async_step_init()
+
+        if user_input is not None:
+            new_options = dict(opts)
+            new_options[CONF_SNAPSHOT_MODE] = mode
+            # Absent because there was nothing to choose from: keep what is
+            # stored rather than silently clearing the user's triggers.
+            if CONF_SNAPSHOT_TRIGGER_DPS in fields and trigger_options:
+                new_options[CONF_SNAPSHOT_TRIGGER_DPS] = user_input.get(
+                    CONF_SNAPSHOT_TRIGGER_DPS, []
+                )
+            if CONF_SNAPSHOT_BUFFER_PATH in fields:
+                new_options[CONF_SNAPSHOT_BUFFER_PATH] = user_input[
+                    CONF_SNAPSHOT_BUFFER_PATH
+                ].strip()
+                new_options[CONF_SNAPSHOT_BUFFER_SECONDS] = int(
+                    user_input[CONF_SNAPSHOT_BUFFER_SECONDS]
+                )
+                new_options[CONF_SNAPSHOT_DELAY_MS] = int(
+                    user_input[CONF_SNAPSHOT_DELAY_MS]
+                )
+            return await self._async_save_options(new_options)
+
+        schema: dict[Any, Any] = {}
+        if CONF_SNAPSHOT_TRIGGER_DPS in fields and trigger_options:
+            schema[
+                vol.Optional(
+                    CONF_SNAPSHOT_TRIGGER_DPS,
+                    default=self._current_triggers(trigger_options),
+                )
+            ] = cv.multi_select(trigger_options)
+        if CONF_SNAPSHOT_BUFFER_PATH in fields:
+            schema[
+                vol.Required(
+                    CONF_SNAPSHOT_BUFFER_PATH,
+                    default=opts.get(
+                        CONF_SNAPSHOT_BUFFER_PATH, video.DEFAULT_BUFFER_PATH
+                    ),
+                )
+            ] = str
+            schema[
+                vol.Required(
+                    CONF_SNAPSHOT_BUFFER_SECONDS,
+                    default=opts.get(
+                        CONF_SNAPSHOT_BUFFER_SECONDS, video.DEFAULT_BUFFER_SECONDS
+                    ),
+                )
+            ] = NumberSelector(
+                NumberSelectorConfig(
+                    min=MIN_BUFFER_SECONDS,
+                    max=MAX_BUFFER_SECONDS,
+                    step=5,
+                    mode=NumberSelectorMode.BOX,
+                    unit_of_measurement="s",
+                )
+            )
+            schema[
+                vol.Required(
+                    CONF_SNAPSHOT_DELAY_MS,
+                    default=opts.get(
+                        CONF_SNAPSHOT_DELAY_MS, video.DEFAULT_SNAPSHOT_DELAY_MS
+                    ),
+                )
+            ] = NumberSelector(
+                NumberSelectorConfig(
+                    min=0,
+                    max=MAX_SNAPSHOT_DELAY_MS,
+                    step=100,
+                    mode=NumberSelectorMode.BOX,
+                    unit_of_measurement="ms",
+                )
+            )
+
+        return self.async_show_form(
+            step_id="snapshot_options",
+            data_schema=vol.Schema(_with_back(schema)),
             description_placeholders={
-                "buffer_estimate": str(
-                    round(video.estimate_buffer_bytes(60) / (1024 * 1024))
+                "mode": mode,
+                "buffer_note": (
+                    ""
+                    if CONF_SNAPSHOT_BUFFER_PATH not in fields
+                    else (
+                        "\n\nThe buffer directory holds the recent video. /dev/shm "
+                        "is RAM, so nothing is written to your SD card or SSD — but "
+                        "Docker gives /dev/shm only 64 MB by default, which you "
+                        "raise with shm_size. Budget roughly 15 MB per minute at "
+                        "2 Mbit/s; 60 seconds is about "
+                        + str(round(video.estimate_buffer_bytes(60) / (1024 * 1024)))
+                        + " MB."
+                    )
+                ),
+                "trigger_hint": (
+                    ""
+                    if trigger_options
+                    else (
+                        "\n\nNo datapoints are known for this device yet, so there "
+                        "is nothing to trigger a snapshot on. Run 'Scan for "
+                        "datapoints' or 'Live capture' first."
+                    )
                 ),
             },
         )
+
+    def _current_triggers(self, trigger_options: Mapping[str, str]) -> list[str]:
+        """The stored snapshot triggers, minus any the device no longer reports."""
+        current = self._config_entry.options.get(CONF_SNAPSHOT_TRIGGER_DPS, [])
+        if isinstance(current, str):
+            # Legacy format: a comma-separated string.
+            current = [x.strip() for x in current.split(",") if x.strip()]
+        return [str(trigger) for trigger in current if str(trigger) in trigger_options]
 
     # --- Datapoint management ---
 
@@ -1025,6 +1486,8 @@ class LscTuyaDoorbellOptionsFlow(OptionsFlow):
 
         if user_input is not None:
             selected = user_input.get("dp_select")
+            if selected == "__back__":
+                return await self.async_step_init()
             if selected == "__add__":
                 return await self.async_step_dp_add()
             if selected is not None:
@@ -1042,7 +1505,8 @@ class LscTuyaDoorbellOptionsFlow(OptionsFlow):
                 )
 
         dp_options["__add__"] = "Add new datapoint..."
-        count = len(dp_options) - 1
+        dp_options["__back__"] = "← Back to the options menu"
+        count = len(dp_options) - 2
 
         return self.async_show_form(
             step_id="dp_list",
@@ -1064,6 +1528,9 @@ class LscTuyaDoorbellOptionsFlow(OptionsFlow):
         if dp_def is None:
             return await self.async_step_dp_list()
 
+        if going_back(user_input):
+            return await self.async_step_dp_list()
+
         if user_input is not None:
             if user_input.get("delete", False):
                 await hub.remove_dp(dp_id)
@@ -1074,18 +1541,23 @@ class LscTuyaDoorbellOptionsFlow(OptionsFlow):
                     entity_type=user_input.get("entity_type"),
                 )
             await self.hass.config_entries.async_reload(self._config_entry.entry_id)
-            return self.async_create_entry(title="", data=self._config_entry.options)
+            # Back to the list, not out of the dialog: editing datapoints is
+            # something people do several of in a row, and closing after each
+            # one meant reopening the options in between.
+            return await self.async_step_dp_list()
 
         return self.async_show_form(
             step_id="dp_edit",
             data_schema=vol.Schema(
-                {
-                    vol.Required("name", default=dp_def.name): str,
-                    vol.Required(
-                        "entity_type", default=dp_def.entity_type
-                    ): _select(ENTITY_TYPES, "entity_type"),
-                    vol.Optional("delete", default=False): bool,
-                }
+                _with_back(
+                    {
+                        vol.Required("name", default=dp_def.name): str,
+                        vol.Required(
+                            "entity_type", default=dp_def.entity_type
+                        ): _select(ENTITY_TYPES, "entity_type"),
+                        vol.Optional("delete", default=False): bool,
+                    }
+                )
             ),
             description_placeholders={
                 "dp_id": str(dp_id),
@@ -1100,6 +1572,9 @@ class LscTuyaDoorbellOptionsFlow(OptionsFlow):
         """Add a new custom datapoint."""
         errors: dict[str, str] = {}
         hub = self._get_hub()
+
+        if going_back(user_input):
+            return await self.async_step_dp_list()
 
         if user_input is not None:
             dp_id = user_input["dp_id"]
@@ -1127,23 +1602,23 @@ class LscTuyaDoorbellOptionsFlow(OptionsFlow):
                 await self.hass.config_entries.async_reload(
                     self._config_entry.entry_id
                 )
-                return self.async_create_entry(
-                    title="", data=self._config_entry.options
-                )
+                return await self.async_step_dp_list()
 
         return self.async_show_form(
             step_id="dp_add",
             data_schema=vol.Schema(
-                {
-                    vol.Required("dp_id"): vol.Coerce(int),
-                    vol.Required("name"): str,
-                    vol.Required("dp_type", default=DP_TYPE_BOOL): _select(
-                        DP_TYPES, "dp_type"
-                    ),
-                    vol.Required("entity_type", default=ENTITY_SWITCH): _select(
-                        ENTITY_TYPES, "entity_type"
-                    ),
-                }
+                _with_back(
+                    {
+                        vol.Required("dp_id"): vol.Coerce(int),
+                        vol.Required("name"): str,
+                        vol.Required("dp_type", default=DP_TYPE_BOOL): _select(
+                            DP_TYPES, "dp_type"
+                        ),
+                        vol.Required("entity_type", default=ENTITY_SWITCH): _select(
+                            ENTITY_TYPES, "entity_type"
+                        ),
+                    }
+                )
             ),
             errors=errors,
         )
@@ -1159,6 +1634,9 @@ class LscTuyaDoorbellOptionsFlow(OptionsFlow):
         If results from a previous scan exist, show them with a force rescan option.
         """
         hub = self._get_hub()
+
+        if going_back(user_input):
+            return await self.async_step_init()
 
         if hub and hub.scan_running:
             return await self.async_step_dp_scan()
@@ -1176,10 +1654,12 @@ class LscTuyaDoorbellOptionsFlow(OptionsFlow):
             return self.async_show_form(
                 step_id="dp_scan_mode",
                 data_schema=vol.Schema(
-                    {
-                        vol.Optional("force_rescan", default=False): bool,
-                        vol.Optional("clear_existing", default=False): bool,
-                    }
+                    _with_back(
+                        {
+                            vol.Optional("force_rescan", default=False): bool,
+                            vol.Optional("clear_existing", default=False): bool,
+                        }
+                    )
                 ),
                 description_placeholders={
                     "has_results": "true",
@@ -1194,7 +1674,7 @@ class LscTuyaDoorbellOptionsFlow(OptionsFlow):
         return self.async_show_form(
             step_id="dp_scan_mode",
             data_schema=vol.Schema(
-                {vol.Optional("clear_existing", default=False): bool}
+                _with_back({vol.Optional("clear_existing", default=False): bool})
             ),
             description_placeholders={"has_results": "false", "found_count": "0"},
         )
@@ -1321,6 +1801,9 @@ class LscTuyaDoorbellOptionsFlow(OptionsFlow):
         existing_ids = set(hub.profile.discovered_dps) if hub.profile else set()
         dp_options = dp_choice_options(discovered, existing_ids)
 
+        if going_back(user_input):
+            return await self.async_step_init()
+
         if user_input is not None:
             selected_ids = set(user_input.get("selected_dps", []))
             self._pending_dps = [
@@ -1331,11 +1814,13 @@ class LscTuyaDoorbellOptionsFlow(OptionsFlow):
                 return self.async_show_form(
                     step_id="dp_scan_results",
                     data_schema=vol.Schema(
-                        {
-                            vol.Optional("selected_dps", default=[]): cv.multi_select(
-                                dp_options
-                            )
-                        }
+                        _with_back(
+                            {
+                                vol.Optional(
+                                    "selected_dps", default=[]
+                                ): cv.multi_select(dp_options)
+                            }
+                        )
                     ),
                     errors={"base": "no_dps_selected"},
                     description_placeholders={"count": str(len(discovered))},
@@ -1352,11 +1837,13 @@ class LscTuyaDoorbellOptionsFlow(OptionsFlow):
         return self.async_show_form(
             step_id="dp_scan_results",
             data_schema=vol.Schema(
-                {
-                    vol.Optional(
-                        "selected_dps", default=default_selected
-                    ): cv.multi_select(dp_options),
-                }
+                _with_back(
+                    {
+                        vol.Optional(
+                            "selected_dps", default=default_selected
+                        ): cv.multi_select(dp_options),
+                    }
+                )
             ),
             description_placeholders={"count": str(len(discovered))},
         )
@@ -1379,6 +1866,9 @@ class LscTuyaDoorbellOptionsFlow(OptionsFlow):
         current = hub.profile.firmware_version
         suggested = infer_firmware_generation(hub.profile.discovered_dps) or ""
 
+        if going_back(user_input):
+            return await self.async_step_init()
+
         if user_input is not None:
             chosen = user_input.get("generation") or None
             changed = await hub.async_set_firmware_generation(chosen)
@@ -1387,7 +1877,7 @@ class LscTuyaDoorbellOptionsFlow(OptionsFlow):
                 chosen or "unknown", changed,
             )
             await self.hass.config_entries.async_reload(self._config_entry.entry_id)
-            return self.async_create_entry(title="", data=self._config_entry.options)
+            return await self.async_step_init()
 
         options = {"": "Unknown — use both tables"}
         options.update({gen: f"Generation {gen}" for gen in sorted(KNOWN_DPS_BY_FIRMWARE)})
@@ -1395,11 +1885,13 @@ class LscTuyaDoorbellOptionsFlow(OptionsFlow):
         return self.async_show_form(
             step_id="firmware_generation",
             data_schema=vol.Schema(
-                {
-                    vol.Optional(
-                        "generation", default=current or suggested or ""
-                    ): vol.In(options),
-                }
+                _with_back(
+                    {
+                        vol.Optional(
+                            "generation", default=current or suggested or ""
+                        ): vol.In(options),
+                    }
+                )
             ),
             description_placeholders={
                 "current": current or "unknown",
@@ -1412,59 +1904,114 @@ class LscTuyaDoorbellOptionsFlow(OptionsFlow):
     async def async_step_live_capture(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Record everything the device reports until the user says stop.
+        """Record everything the device reports, refreshing the screen as it comes in.
 
-        Deliberately a repeating form and not async_show_progress: a progress
-        step only resumes when its task finishes, and its single control is the
-        close button, which aborts the flow. An event datapoint cannot be found
-        by querying — it only carries a value at the moment someone presses the
-        button — so the session has to last as long as the user needs.
+        An event datapoint cannot be found by querying: it only carries a value
+        at the moment someone presses the button. So the screen has to keep
+        updating while the user is at the front door, and there is exactly one
+        way to do that. A FORM is fetched once and held by the frontend until
+        it is submitted; nothing pushes into it. A SHOW_PROGRESS step is the
+        only result Home Assistant re-renders on its own, and it does so when
+        its progress task finishes -- so a two-second sleep, replaced each
+        round, is the refresh loop.
+
+        The price is that a progress step takes no input, so there is no Stop
+        button and closing the dialog is how you stop. That costs nothing,
+        because the session lives on the hub: ``async_remove`` stops it and
+        leaves what it saw for "Review capture results".
         """
         hub = self._get_hub()
+
         if hub is None or not hub.available:
+            # Reachable only on the way in, straight from the menu, so a form
+            # is still allowed here: once a progress step has been shown the
+            # only legal successors are progress and progress-done.
+            if user_input is not None:
+                return await self.async_step_init()
             return self.async_show_form(
                 step_id="live_capture",
-                data_schema=vol.Schema({vol.Optional("done", default=True): bool}),
+                data_schema=vol.Schema(_with_back({})),
                 errors={"base": "device_unavailable"},
-                description_placeholders={
-                    "elapsed": "0",
-                    "count": "0",
-                    "summary": "",
-                    "events": "",
-                },
             )
 
         capture = hub.live_capture
         if capture is None or not capture.running:
-            capture = await hub.async_start_live_capture()
-
-        if user_input is not None and user_input.get("done"):
-            await hub.async_stop_live_capture()
-            return await self.async_step_capture_review()
+            try:
+                capture = await hub.async_start_live_capture()
+            except Exception as err:  # noqa: BLE001 - mapped to a user-facing cause
+                _LOGGER.warning("Could not start a live capture: %s", err)
+                if user_input is not None:
+                    return await self.async_step_init()
+                return self.async_show_form(
+                    step_id="live_capture",
+                    data_schema=vol.Schema(_with_back({})),
+                    errors={"base": error_key_for(err)},
+                )
 
         found = capture.found
+        reason = capture_should_stop(found, capture.elapsed, time.time())
+        if reason is not None:
+            _LOGGER.info(
+                "Live capture stopping by itself (%s) after %.0fs with %d "
+                "datapoint(s)",
+                reason,
+                capture.elapsed,
+                len(found),
+            )
+            await hub.async_stop_live_capture()
+            return self.async_show_progress_done(next_step_id="capture_review")
+
         events = [dp for dp in found if dp.looks_like_an_event]
-        return self.async_show_form(
+        # A fresh task every round: Home Assistant only re-registers its
+        # "call me back when this finishes" callback when the task changed.
+        tick = self.hass.async_create_task(
+            asyncio.sleep(LIVE_CAPTURE_TICK_SECONDS),
+            name=f"lsc_tuya_doorbell live capture refresh {self._config_entry.entry_id}",
+        )
+        return self.async_show_progress(
             step_id="live_capture",
-            data_schema=vol.Schema({vol.Optional("done", default=False): bool}),
+            progress_action="live_capture",
+            progress_task=tick,
             description_placeholders={
                 "elapsed": str(int(capture.elapsed)),
                 "count": str(len(found)),
-                "summary": capture_summary(found),
+                "detail": capture_detail(found, last_reported_dps(capture, found)),
                 "events": ", ".join(f"DP {dp.dp_id}" for dp in events) or "none yet",
+                "idle": str(int(LIVE_CAPTURE_IDLE_SECONDS)),
+                "limit": str(int(LIVE_CAPTURE_MAX_SECONDS // 60)),
             },
         )
 
     async def async_step_capture_review(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Pick which of the captured datapoints to keep."""
+        """Pick which of the captured datapoints to keep.
+
+        Also a menu entry of its own, because closing the dialog is how a
+        capture is stopped: without a way back to the results, stopping would
+        throw away what the session had just spent minutes collecting.
+        """
         hub = self._get_hub()
         if hub is None:
             return self.async_abort(reason="hub_unavailable")
 
+        if going_back(user_input):
+            return await self.async_step_init()
+
         capture = hub.live_capture
-        found = list(capture.found) if capture else []
+        if capture is not None and capture.running:
+            # Arrived here from the menu while a session was still listening.
+            await hub.async_stop_live_capture()
+
+        if capture is None:
+            return self.async_show_form(
+                step_id="capture_review",
+                data_schema=vol.Schema(_with_back({})),
+                errors={"base": "no_capture_session"},
+                description_placeholders={"count": "0", "detail": ""},
+            )
+
+        found = list(capture.found)
         existing_ids = set(hub.profile.discovered_dps) if hub.profile else set()
         dp_options = dp_choice_options(found, existing_ids)
 
@@ -1476,40 +2023,50 @@ class LscTuyaDoorbellOptionsFlow(OptionsFlow):
                 return self.async_show_form(
                     step_id="capture_review",
                     data_schema=vol.Schema(
-                        {
-                            vol.Optional("selected_dps", default=[]): cv.multi_select(
-                                dp_options
-                            )
-                        }
+                        _with_back(
+                            {
+                                vol.Optional(
+                                    "selected_dps", default=[]
+                                ): cv.multi_select(dp_options)
+                            }
+                        )
                     ),
                     errors={"base": "no_dps_selected"},
-                    description_placeholders={"count": str(len(found))},
+                    description_placeholders={
+                        "count": str(len(found)),
+                        "detail": capture_detail(found),
+                    },
                 )
             return await self.async_step_assign_roles()
 
         if not dp_options:
             return self.async_show_form(
                 step_id="capture_review",
-                data_schema=vol.Schema({}),
+                data_schema=vol.Schema(_with_back({})),
                 errors={"base": "capture_found_nothing"},
-                description_placeholders={"count": "0"},
+                description_placeholders={"count": "0", "detail": ""},
             )
 
         return self.async_show_form(
             step_id="capture_review",
             data_schema=vol.Schema(
-                {
-                    vol.Optional(
-                        "selected_dps",
-                        default=[
-                            str(dp.dp_id)
-                            for dp in found
-                            if dp.dp_id not in existing_ids
-                        ],
-                    ): cv.multi_select(dp_options),
-                }
+                _with_back(
+                    {
+                        vol.Optional(
+                            "selected_dps",
+                            default=[
+                                str(dp.dp_id)
+                                for dp in found
+                                if dp.dp_id not in existing_ids
+                            ],
+                        ): cv.multi_select(dp_options),
+                    }
+                )
             ),
-            description_placeholders={"count": str(len(found))},
+            description_placeholders={
+                "count": str(len(found)),
+                "detail": capture_detail(found),
+            },
         )
 
     # --- Roles ---
@@ -1538,6 +2095,9 @@ class LscTuyaDoorbellOptionsFlow(OptionsFlow):
         )
         current = dict(hub.profile.roles) if hub.profile else {}
 
+        if going_back(user_input):
+            return await self.async_step_init()
+
         if user_input is not None:
             roles: dict[str, int | None] = {}
             for role in ROLES:
@@ -1550,18 +2110,20 @@ class LscTuyaDoorbellOptionsFlow(OptionsFlow):
                 roles=roles,
             )
             await self.hass.config_entries.async_reload(self._config_entry.entry_id)
-            return self.async_create_entry(title="", data=self._config_entry.options)
+            return await self.async_step_init()
 
         return self.async_show_form(
             step_id="assign_roles",
             data_schema=vol.Schema(
-                {
-                    vol.Optional(
-                        role,
-                        default=suggested_role_dp(role, options, current),
-                    ): vol.In(options)
-                    for role in ROLES
-                }
+                _with_back(
+                    {
+                        vol.Optional(
+                            role,
+                            default=suggested_role_dp(role, options, current),
+                        ): vol.In(options)
+                        for role in ROLES
+                    }
+                )
             ),
             description_placeholders={"count": str(len(self._pending_dps))},
         )

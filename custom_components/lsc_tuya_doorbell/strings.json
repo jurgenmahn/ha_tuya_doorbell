@@ -88,7 +88,7 @@
     "step": {
       "init": {
         "title": "LSC Tuya Doorbell Options",
-        "description": "Choose what you want to configure.",
+        "description": "Choose what you want to configure. Each screen saves when you submit it and brings you back here, so you can do several things in a row; use 'Close' when you are done.",
         "menu_options": {
           "connection": "Connection settings",
           "camera_settings": "Camera settings",
@@ -96,8 +96,22 @@
           "dp_list": "Manage datapoints",
           "dp_scan_mode": "Scan for datapoints",
           "live_capture": "Live capture (find button and motion datapoints)",
+          "capture_review": "Review capture results",
           "assign_roles": "Assign roles to datapoints",
-          "firmware_generation": "Datapoint names (firmware generation)"
+          "firmware_generation": "Datapoint names (firmware generation)",
+          "finish": "Close"
+        },
+        "menu_option_descriptions": {
+          "connection": "IP address, port and Tuya protocol version.",
+          "camera_settings": "Where the video comes from, and what is done with it.",
+          "snapshot_settings": "How a picture is produced when the doorbell fires.",
+          "dp_list": "Rename, retype or delete the datapoints this device has.",
+          "dp_scan_mode": "Ask the device which datapoints it will answer for.",
+          "live_capture": "Watch what the device reports while you press the doorbell. The only way to find an event datapoint.",
+          "capture_review": "Pick datapoints out of the last live capture.",
+          "assign_roles": "Say which datapoint is the button, the motion sensor and the record switch.",
+          "firmware_generation": "Which datapoint-name table applies to this device.",
+          "finish": "Close this dialog. Everything you submitted is already saved."
         }
       },
       "connection": {
@@ -106,12 +120,13 @@
         "data": {
           "host": "IP address",
           "port": "Port",
-          "protocol_version": "Protocol version"
+          "protocol_version": "Protocol version",
+          "back": "Back to the options menu (nothing on this screen is saved)"
         }
       },
       "dp_list": {
         "title": "Manage Datapoints",
-        "description": "Your device has {count} configured datapoint(s). Select one to edit, or add a new one.",
+        "description": "Your device has {count} configured datapoint(s). Select one to edit, add a new one, or go back. Editing brings you back to this list, so you can do several in a row.",
         "data": {
           "dp_select": "Datapoint"
         }
@@ -122,7 +137,8 @@
         "data": {
           "name": "Name",
           "entity_type": "Entity type",
-          "delete": "Delete this datapoint"
+          "delete": "Delete this datapoint",
+          "back": "Back to the datapoint list (nothing on this screen is saved)"
         }
       },
       "dp_add": {
@@ -132,44 +148,34 @@
           "dp_id": "DP ID (1-255)",
           "name": "Name",
           "dp_type": "Data type",
-          "entity_type": "Entity type"
+          "entity_type": "Entity type",
+          "back": "Back to the datapoint list (nothing on this screen is saved)"
         }
       },
       "camera_settings": {
         "title": "Camera Settings",
-        "description": "Configure the RTSP camera stream. {trigger_hint}",
+        "description": "Where the video comes from decides which settings mean anything, so that question comes first and the next screen asks only what applies.\n\nThese cameras get confused by several simultaneous RTSP sessions. Measured on a real doorbell: a snapshot takes 5.86 s on its own, and 15.94 s when a second grab is already holding a session open. Home Assistant's stream, a snapshot, HomeKit and a detection service add up to four connections fast. A restreamer such as go2rtc or Frigate keeps one connection to the doorbell and fans it out — that is the whole reason the option exists.\n\nThe two settings below apply either way.",
         "data": {
-          "onvif_username": "ONVIF/RTSP username",
-          "onvif_password": "ONVIF/RTSP password",
-          "rtsp_port": "RTSP port",
-          "rtsp_path": "RTSP stream path",
+          "video_source": "Where does the video come from?",
           "snapshot_path": "Snapshot save directory",
           "force_record_on": "Auto-enable the record switch",
-          "snapshot_trigger_dps": "Take a snapshot when these datapoints fire",
-          "stream_url_override": "Stream URL override",
-          "still_image_url_override": "Still image URL override"
+          "back": "Back to the options menu (nothing on this screen is saved)"
         },
         "data_description": {
-          "force_record_on": "Some Tuya devices randomly turn recording — and with it ONVIF — off. This forces it back on.",
-          "snapshot_trigger_dps": "Only datapoints this device actually reports are listed. Run a scan or a live capture to fill this list.",
-          "stream_url_override": "Full RTSP URL to use instead of the one built from host, port and path. Point this at a restreamer such as go2rtc when several consumers need the stream; leave empty for the default.",
-          "still_image_url_override": "HTTP URL returning a single JPEG, used for snapshots instead of grabbing a frame off the RTSP stream. For go2rtc: http://HOST:1984/api/frame.jpeg?src=NAME. Leave empty for the default."
+          "video_source": "Pre-selected from what is already configured: a stream URL override means a restreamer is in front of the camera.",
+          "snapshot_path": "Where taken pictures are written. Home Assistant serves the www folder of your configuration as /local, so the default ends up at /local/doorbell/... and that URL is what the events carry. Only the ten most recent files per device are kept.",
+          "force_record_on": "Some Tuya devices randomly turn recording — and with it ONVIF — off. This forces it back on. It only does anything when a datapoint holds the 'record switch' role, which you set under 'Assign roles to datapoints'. Right now {record_role}."
         }
       },
       "snapshot_settings": {
         "title": "Snapshot Settings",
-        "description": "How a picture is produced when the doorbell fires.\n\nBuffer mode keeps recent video in the buffer directory. /dev/shm is RAM, so nothing is written to your SD card or SSD — but Docker gives /dev/shm only 64 MB by default, which you raise with shm_size. Budget roughly 15 MB per minute at 2 Mbit/s; 60 seconds is about {buffer_estimate} MB.",
+        "description": "How a picture is produced when the doorbell fires. The four modes read different settings, so the mode comes first and the next screen asks only what this mode uses.\n\nMeasured on a real doorbell:\n- ffmpeg grab straight from the camera: 5.86 s\n- the same grab with a second one already running: 15.94 s\n- go2rtc still image, source already warm: 1.82 – 3.09 s\n- a continuous ffmpeg writing a rolling JPEG: 1.00 s, flat\n\nThe delay is not the network. The keyframe is decoded after about a second and ffmpeg then spends five to six more working out what the stream contains; no flag shortens that, so anything that starts a process per press pays it every time.",
         "data": {
           "snapshot_mode": "Snapshot mode",
-          "snapshot_buffer_path": "Buffer directory",
-          "snapshot_buffer_seconds": "Buffer length",
-          "snapshot_delay_ms": "Look back by"
+          "back": "Back to the options menu (nothing on this screen is saved)"
         },
         "data_description": {
-          "snapshot_mode": "'On demand' works everywhere and needs no configuration. 'Warm' keeps one ffmpeg running so a still is always ready. 'Buffer' additionally keeps the last few seconds of video on disk, which is the only mode that can look back in time.",
-          "snapshot_buffer_path": "Only used in buffer mode. Put it on tmpfs (/dev/shm) so the segments never touch persistent storage; see above for the size it needs.",
-          "snapshot_buffer_seconds": "How much video is kept. Longer means more memory.",
-          "snapshot_delay_ms": "The doorbell reports a press seconds after it happened, so a picture of 'now' shows the visitor already walking away. This takes the picture that many milliseconds earlier. Only buffer mode can look back — in the other modes this setting is ignored."
+          "snapshot_mode": "'Off' takes no pictures at all. 'On demand' starts one ffmpeg per press: slow, but it needs nothing and works anywhere, which is why it is the default. 'Warm' keeps one ffmpeg running so a still is always about a second old. 'Buffer' additionally keeps the last minute of video on tmpfs and is the only mode that can look back in time — which matters, because the device reports a press three to five seconds after it happened."
         }
       },
       "dp_scan_mode": {
@@ -177,7 +183,8 @@
         "description": "The scan asks the device for every datapoint it will answer for (DP 1-255). This can take up to 2 minutes.\n\nNothing is saved until you have picked what to keep. Datapoints that only fire on an event — the doorbell button, motion — cannot be found this way; use live capture for those.\n\nYou can safely close this dialog while the scan runs and come back for the results.",
         "data": {
           "clear_existing": "Replace all existing datapoints with the scan results",
-          "force_rescan": "Run a new scan (discard the previous results)"
+          "force_rescan": "Run a new scan (discard the previous results)",
+          "back": "Back to the options menu (nothing on this screen is saved)"
         }
       },
       "dp_scan": {
@@ -194,21 +201,23 @@
         "title": "Scan Results",
         "description": "Found {count} datapoint(s). Pick the ones you want; only these are written to the device profile, with everything the scan learned about them.",
         "data": {
-          "selected_dps": "Datapoints to keep"
+          "selected_dps": "Datapoints to keep",
+          "back": "Back to the options menu (nothing on this screen is saved)"
         }
       },
       "live_capture": {
         "title": "Live Capture",
-        "description": "Capture is running ({elapsed}s) — {count} datapoint(s) seen: {summary}\n\nPress the doorbell, walk in front of it, and work through the Tuya app. A datapoint marked ⟳ has reported more than one value and behaves like an event; those are the ones a doorbell button and a motion sensor hide behind.\n\nWorth doing while you are here: toggle every switch and setting in the Tuya app off and on again — night vision, the chime, the indicator light, recording mode, all of them. A datapoint only shows up once the device has reported it, and a setting that nobody touches never does. Switching each one twice returns it to where it was and reveals it at the same time.\n\nEvent candidates so far: {events}\n\nSubmit to refresh this screen. Tick 'Done' when you have triggered everything you want to find.",
+        "description": "Recording what the device reports needs a live connection to it. Fix the connection first, then start the capture again.",
         "data": {
-          "done": "Done — stop capturing"
+          "back": "Back to the options menu (nothing on this screen is saved)"
         }
       },
       "capture_review": {
         "title": "Capture Results",
-        "description": "The capture saw {count} datapoint(s). Pick the ones to keep; ⟳ marks the ones that behave like events.",
+        "description": "The capture saw {count} datapoint(s). Pick the ones to keep; ⟳ marks the ones that behave like events.\n\n{detail}",
         "data": {
-          "selected_dps": "Datapoints to keep"
+          "selected_dps": "Datapoints to keep",
+          "back": "Back to the options menu (nothing on this screen is saved)"
         }
       },
       "assign_roles": {
@@ -217,19 +226,67 @@
         "data": {
           "doorbell_button": "Doorbell button",
           "motion": "Motion detection",
-          "record_switch": "Recording switch"
+          "record_switch": "Recording switch",
+          "back": "Back to the options menu (nothing on this screen is saved)"
         }
       },
       "firmware_generation": {
         "title": "Datapoint names",
         "description": "Different firmware generations of this doorbell use the same datapoint numbers for different things, so the names come from a table per generation. Without knowing which one applies, both tables are used at once and disagreements are resolved in favour of the newer — which is how a device can end up with two switches sharing a name.\n\nCurrently set to: {current}\nBased on the datapoints this device reports: {suggested}\n\nOnly names that came from a table are changed. A name you set yourself is left alone.",
         "data": {
-          "generation": "Firmware generation"
+          "generation": "Firmware generation",
+          "back": "Back to the options menu (nothing on this screen is saved)"
+        }
+      },
+      "camera_direct": {
+        "title": "Camera: Direct Connection",
+        "description": "The stream URL is built from the device's IP address ({host}), the port and the path below, and everything that wants video opens its own session to the doorbell.\n\nSubmitting this screen clears any stream URL override: the two describe different setups and only one of them can win.",
+        "data": {
+          "onvif_username": "ONVIF/RTSP username",
+          "onvif_password": "ONVIF/RTSP password",
+          "rtsp_port": "RTSP port",
+          "rtsp_path": "RTSP stream path",
+          "still_image_url_override": "Still image URL (optional)",
+          "back": "Back to the options menu (nothing from these two screens is saved)"
+        },
+        "data_description": {
+          "still_image_url_override": "An HTTP URL that returns a single JPEG, used for snapshots instead of grabbing a frame off the RTSP stream. Leave empty unless the camera offers one."
+        }
+      },
+      "camera_restream": {
+        "title": "Camera: Through a Restreamer",
+        "description": "One connection to the doorbell, fanned out to everything else. Point both fields at the restreamer, not at the camera — in 2.x the snapshot code rebuilt its own URL from host, port and path, which is how a fourth session ended up on the camera even with an override set.\n\nThe RTSP port and path are not used while this is in place.",
+        "data": {
+          "stream_url_override": "Stream URL",
+          "still_image_url_override": "Still image URL (optional)",
+          "back": "Back to the options menu (nothing from these two screens is saved)"
+        },
+        "data_description": {
+          "stream_url_override": "The restreamer's RTSP URL, for example rtsp://192.168.1.10:8554/doorbell.",
+          "still_image_url_override": "An HTTP URL returning a single JPEG. For go2rtc that is http://192.168.1.10:1984/api/frame.jpeg?src=doorbell — measured at 1.82 – 3.09 s against 5.86 s for an ffmpeg grab. Leave empty to grab a frame off the stream instead."
+        }
+      },
+      "snapshot_options": {
+        "title": "Snapshot Mode Settings",
+        "description": "Settings for the '{mode}' snapshot mode. Only what this mode actually reads is shown.{buffer_note}{trigger_hint}",
+        "data": {
+          "snapshot_trigger_dps": "Take a snapshot when these datapoints fire",
+          "snapshot_buffer_path": "Buffer directory",
+          "snapshot_buffer_seconds": "Buffer length",
+          "snapshot_delay_ms": "Look back by",
+          "back": "Back to the options menu (nothing from these two screens is saved)"
+        },
+        "data_description": {
+          "snapshot_trigger_dps": "Only datapoints this device actually reports are listed. Run a scan or a live capture to fill this list.",
+          "snapshot_buffer_path": "Put it on tmpfs (/dev/shm) so the segments never touch persistent storage; see above for the size it needs.",
+          "snapshot_buffer_seconds": "How much video is kept. Longer means more memory.",
+          "snapshot_delay_ms": "The doorbell reports a press seconds after it happened, so a picture of 'now' shows the visitor already walking away. This takes the picture that many milliseconds earlier. Start around 3000 ms and adjust."
         }
       }
     },
     "progress": {
-      "dp_scan": "{status} — found {found_count} datapoint(s): {found_dps}. You can close this dialog; the scan continues in the background."
+      "dp_scan": "{status} — found {found_count} datapoint(s): {found_dps}. You can close this dialog; the scan continues in the background.",
+      "live_capture": "Capturing for {elapsed}s — {count} datapoint(s) seen.\n\n{detail}\n\nEvent candidates so far: {events}\n\nPress the doorbell, walk in front of it, and work through the Tuya app: toggle night vision, the chime, the indicator light and recording mode off and on again. A datapoint only appears once the device has reported it, and a setting nobody touches never does; switching each one twice puts it back where it was and reveals it at the same time. ⟳ marks a datapoint that has carried more than one value, which is what a button press and a motion sensor look like. ← marks whatever reported last.\n\n**Close this dialog when you are done — that is how you stop, and nothing is lost.** The capture lives on the device, not in this window; reopen the options and choose 'Review capture results' to pick what to keep.\n\nIt also stops by itself after {idle}s without anything new, and after {limit} minutes regardless."
     },
     "error": {
       "dp_already_exists": "A datapoint with this ID already exists.",
@@ -247,7 +304,9 @@
       "scan_timeout": "The datapoint scan timed out after 120 seconds. The device may be slow or unresponsive.",
       "no_dps_selected": "Select at least one datapoint, or go back if you want to keep none.",
       "capture_found_nothing": "The capture did not see a single datapoint. The device may have been disconnected — check that it is online, then try again and press the doorbell while the capture runs.",
-      "unknown": "An unexpected error occurred. Check the logs for details."
+      "unknown": "An unexpected error occurred. Check the logs for details.",
+      "stream_url_required": "A restreamer route needs a stream URL. Enter the restreamer's RTSP URL, or go back and choose 'Directly from the camera'.",
+      "no_capture_session": "No live capture has run since the integration was last loaded, so there is nothing to review. Start one under 'Live capture'."
     },
     "abort": {
       "hub_unavailable": "The integration is not loaded for this device. Reload the entry and try again."
@@ -281,15 +340,21 @@
     "snapshot_mode": {
       "options": {
         "off": "Off — no snapshots",
-        "on_demand": "On demand — fetch a picture when something happens (default)",
-        "warm": "Warm — keep a fresh still ready at all times",
-        "buffer": "Buffer — keep recent video in memory so snapshots can look back in time"
+        "on_demand": "On demand — one ffmpeg per press, about 5.9 s (default)",
+        "warm": "Warm — a rolling still kept ready, about 1.0 s",
+        "buffer": "Buffer — recent video kept on tmpfs, the only mode that can look back"
       }
     },
     "scan_failed_action": {
       "options": {
         "retry": "Try the scan again",
         "back": "Back to the options menu"
+      }
+    },
+    "video_source": {
+      "options": {
+        "direct": "Directly from the camera — you give the host, port and path",
+        "restream": "From a restreamer (go2rtc, Frigate) — you give the stream URL"
       }
     }
   },

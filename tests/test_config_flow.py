@@ -20,6 +20,7 @@ import asyncio
 import json
 import pathlib
 import sys
+import time
 import types
 
 import pytest
@@ -665,7 +666,7 @@ class TestSnapshotTriggers:
         assert options["7"] == "DP 7: Button"
 
     def test_an_empty_profile_does_not_fall_back_to_hardcoded_numbers(self):
-        assert config_flow.snapshot_trigger_options(_Profile({})) == {}
+        assert config_flow.snapshot_trigger_options(_OptionsProfile({})) == {}
 
 
 # --------------------------------------------------------------------------
@@ -780,3 +781,579 @@ class TestRoles:
             )
             == config_flow.ROLE_NONE
         )
+
+
+# --------------------------------------------------------------------------
+# Options flow: the pieces that need a Home Assistant to talk to
+# --------------------------------------------------------------------------
+
+from homeassistant.config_entries import ConfigEntry as _StubEntry  # noqa: E402
+
+
+class _FakeConfigEntries:
+    """Records what the flow wrote, and applies it like Home Assistant would."""
+
+    def __init__(self) -> None:
+        self.option_writes: list[dict] = []
+        self.data_writes: list[dict] = []
+        self.reloads: list[str] = []
+
+    def async_update_entry(self, entry, *, data=None, options=None):
+        if data is not None:
+            entry.data = dict(data)
+            self.data_writes.append(dict(data))
+        if options is not None:
+            entry.options = dict(options)
+            self.option_writes.append(dict(options))
+        return True
+
+    async def async_reload(self, entry_id):
+        self.reloads.append(entry_id)
+
+
+class _FakeHass:
+    def __init__(self) -> None:
+        self.config_entries = _FakeConfigEntries()
+        self.data: dict = {}
+        self.tasks: list[str] = []
+
+    def async_create_task(self, coro, name=None):
+        # The flow only needs something to hand to async_show_progress; running
+        # a two-second sleep in a unit test would be two seconds wasted.
+        coro.close()
+        self.tasks.append(name or "")
+        return f"task:{name}"
+
+
+class _FakeHub:
+    def __init__(self, profile=None, capture=None, available=True):
+        self.profile = profile
+        self.live_capture = capture
+        self.available = available
+        self.scan_running = False
+        self.scan_results = None
+        self.scan_error = None
+        self.scan_task = None
+        self.updated: list[tuple] = []
+        self.removed: list[int] = []
+
+    async def update_dp(self, dp_id, name=None, entity_type=None):
+        self.updated.append((dp_id, name, entity_type))
+
+    async def remove_dp(self, dp_id):
+        self.removed.append(dp_id)
+
+    async def async_stop_live_capture(self):
+        if self.live_capture is not None:
+            self.live_capture.stop()
+        return self.live_capture
+
+    async def async_apply_discovered_dps(self, dps, clear_existing=False, roles=None):
+        self.applied = (list(dps), clear_existing, roles)
+
+
+class _OptionsProfile:
+    """A profile stand-in carrying everything the options steps read."""
+
+    def __init__(self, names: dict, roles: dict | None = None):
+        self.discovered_dps = {
+            dp_id: types.SimpleNamespace(
+                dp_id=dp_id,
+                name=name,
+                dp_type="bool",
+                entity_type="sensor",
+            )
+            for dp_id, name in names.items()
+        }
+        self.roles = roles or {}
+        self.firmware_version = None
+
+    def role_of(self, dp_id):
+        for role, claimed in self.roles.items():
+            if claimed == dp_id:
+                return role
+        return None
+
+
+def _options_flow(options=None, data=None, hub=None):
+    entry = _StubEntry(entry_id="1", data=dict(data or {}), options=dict(options or {}))
+    flow = config_flow.LscTuyaDoorbellOptionsFlow(entry)
+    flow.hass = _FakeHass()
+    flow.hass.data[config_flow.DOMAIN] = {"1": hub}
+    return flow
+
+
+def _fields(result) -> set[str]:
+    return set(result["data_schema"].defaults())
+
+
+# --------------------------------------------------------------------------
+# Camera settings split by where the video comes from
+# --------------------------------------------------------------------------
+
+
+class TestVideoSourceSplit:
+    def test_a_stream_override_means_a_restreamer(self):
+        assert (
+            config_flow.video_source_of({"stream_url_override": "rtsp://go2rtc/x"})
+            == config_flow.VIDEO_SOURCE_RESTREAM
+        )
+
+    def test_nothing_configured_means_the_camera_itself(self):
+        assert config_flow.video_source_of({}) == config_flow.VIDEO_SOURCE_DIRECT
+
+    def test_whitespace_is_not_a_stream_url(self):
+        assert (
+            config_flow.video_source_of({"stream_url_override": "   "})
+            == config_flow.VIDEO_SOURCE_DIRECT
+        )
+
+    @pytest.mark.asyncio
+    async def test_the_choice_is_preselected_from_what_is_stored(self):
+        flow = _options_flow({"stream_url_override": "rtsp://go2rtc/doorbell"})
+        result = await flow.async_step_camera_settings()
+        assert result["data_schema"].defaults()["video_source"] == "restream"
+
+        flow = _options_flow({})
+        result = await flow.async_step_camera_settings()
+        assert result["data_schema"].defaults()["video_source"] == "direct"
+
+    @pytest.mark.asyncio
+    async def test_the_direct_route_never_shows_the_stream_url(self):
+        flow = _options_flow({})
+        result = await flow.async_step_camera_settings({"video_source": "direct"})
+
+        assert result["step_id"] == "camera_direct"
+        assert _fields(result) == {
+            "onvif_username",
+            "onvif_password",
+            "rtsp_port",
+            "rtsp_path",
+            "still_image_url_override",
+            "back",
+        }
+
+    @pytest.mark.asyncio
+    async def test_the_restreamer_route_never_shows_port_or_path(self):
+        flow = _options_flow({})
+        result = await flow.async_step_camera_settings({"video_source": "restream"})
+
+        assert result["step_id"] == "camera_restream"
+        assert _fields(result) == {
+            "stream_url_override",
+            "still_image_url_override",
+            "back",
+        }
+
+    @pytest.mark.asyncio
+    async def test_choosing_direct_clears_the_override_that_would_outrank_it(self):
+        """The bug this split exists for: an override kept winning silently."""
+        flow = _options_flow({"stream_url_override": "rtsp://go2rtc/doorbell"})
+        await flow.async_step_camera_settings({"video_source": "direct"})
+        await flow.async_step_camera_direct({"rtsp_port": 8554, "rtsp_path": "/live"})
+
+        assert flow._config_entry.options["stream_url_override"] == ""
+        assert flow._config_entry.options["rtsp_path"] == "/live"
+
+    @pytest.mark.asyncio
+    async def test_a_restreamer_without_a_url_is_not_a_restreamer(self):
+        flow = _options_flow({})
+        await flow.async_step_camera_settings({"video_source": "restream"})
+        result = await flow.async_step_camera_restream({"stream_url_override": "  "})
+
+        assert result["errors"] == {"stream_url_override": "stream_url_required"}
+        assert flow.hass.config_entries.option_writes == []
+
+    @pytest.mark.asyncio
+    async def test_the_snapshot_trigger_left_the_camera_screens(self):
+        """It belongs with the snapshots it triggers, not with the stream."""
+        profile = _OptionsProfile({7: "Button"})
+        flow = _options_flow({}, hub=_FakeHub(profile))
+
+        chooser = await flow.async_step_camera_settings()
+        direct = await flow.async_step_camera_direct()
+        restream = await flow.async_step_camera_restream()
+
+        for result in (chooser, direct, restream):
+            assert "snapshot_trigger_dps" not in _fields(result)
+
+
+# --------------------------------------------------------------------------
+# Snapshot settings split by mode
+# --------------------------------------------------------------------------
+
+
+class TestSnapshotModeSplit:
+    def test_off_asks_nothing(self):
+        assert config_flow.snapshot_fields_for("off") == ()
+
+    @pytest.mark.parametrize("mode", ["on_demand", "warm"])
+    def test_the_simple_modes_only_need_their_triggers(self, mode):
+        assert config_flow.snapshot_fields_for(mode) == ("snapshot_trigger_dps",)
+
+    def test_only_buffer_mode_has_a_buffer(self):
+        fields = config_flow.snapshot_fields_for("buffer")
+        assert set(fields) == {
+            "snapshot_trigger_dps",
+            "snapshot_buffer_path",
+            "snapshot_buffer_seconds",
+            "snapshot_delay_ms",
+        }
+
+    def test_every_mode_the_video_module_offers_is_covered(self):
+        for mode in config_flow.video.SNAPSHOT_MODES:
+            config_flow.snapshot_fields_for(mode)
+
+    @pytest.mark.asyncio
+    async def test_the_mode_is_preselected_from_what_is_stored(self):
+        flow = _options_flow({"snapshot_mode": "buffer"})
+        result = await flow.async_step_snapshot_settings()
+        assert result["data_schema"].defaults()["snapshot_mode"] == "buffer"
+
+    @pytest.mark.asyncio
+    async def test_the_mode_screen_asks_only_the_mode(self):
+        flow = _options_flow({})
+        result = await flow.async_step_snapshot_settings()
+        assert _fields(result) == {"snapshot_mode", "back"}
+
+    @pytest.mark.asyncio
+    async def test_off_saves_straight_away_and_has_no_follow_up(self):
+        flow = _options_flow({}, hub=_FakeHub(_OptionsProfile({7: "Button"})))
+        result = await flow.async_step_snapshot_settings({"snapshot_mode": "off"})
+
+        assert result["type"] == "menu"
+        assert flow._config_entry.options["snapshot_mode"] == "off"
+
+    @pytest.mark.asyncio
+    async def test_warm_asks_for_triggers_and_nothing_about_a_buffer(self):
+        flow = _options_flow({}, hub=_FakeHub(_OptionsProfile({7: "Button"})))
+        result = await flow.async_step_snapshot_settings({"snapshot_mode": "warm"})
+
+        assert result["step_id"] == "snapshot_options"
+        assert _fields(result) == {"snapshot_trigger_dps", "back"}
+
+    @pytest.mark.asyncio
+    async def test_buffer_asks_for_everything_a_buffer_needs(self):
+        flow = _options_flow({}, hub=_FakeHub(_OptionsProfile({7: "Button"})))
+        result = await flow.async_step_snapshot_settings({"snapshot_mode": "buffer"})
+
+        assert _fields(result) == {
+            "snapshot_trigger_dps",
+            "snapshot_buffer_path",
+            "snapshot_buffer_seconds",
+            "snapshot_delay_ms",
+            "back",
+        }
+
+    @pytest.mark.asyncio
+    async def test_a_device_without_datapoints_is_not_offered_a_trigger_list(self):
+        flow = _options_flow({}, hub=_FakeHub(_OptionsProfile({})))
+        result = await flow.async_step_snapshot_settings({"snapshot_mode": "warm"})
+        assert _fields(result) == {"back"}
+
+    @pytest.mark.asyncio
+    async def test_the_follow_up_saves_the_mode_it_was_reached_with(self):
+        flow = _options_flow({}, hub=_FakeHub(_OptionsProfile({7: "Button"})))
+        await flow.async_step_snapshot_settings({"snapshot_mode": "buffer"})
+        result = await flow.async_step_snapshot_options(
+            {
+                "snapshot_trigger_dps": ["7"],
+                "snapshot_buffer_path": " /dev/shm/x ",
+                "snapshot_buffer_seconds": 90,
+                "snapshot_delay_ms": 3000,
+            }
+        )
+
+        assert result["type"] == "menu"
+        stored = flow._config_entry.options
+        assert stored["snapshot_mode"] == "buffer"
+        assert stored["snapshot_buffer_path"] == "/dev/shm/x"
+        assert stored["snapshot_delay_ms"] == 3000
+        assert stored["snapshot_trigger_dps"] == ["7"]
+
+
+# --------------------------------------------------------------------------
+# Navigation: getting back, and staying in the dialog
+# --------------------------------------------------------------------------
+
+
+class TestNavigation:
+    def test_the_menu_offers_a_way_out_and_a_way_back_to_a_capture(self):
+        assert config_flow.MENU_FINISH in config_flow.MENU_OPTIONS
+        assert config_flow.MENU_CAPTURE_REVIEW in config_flow.MENU_OPTIONS
+
+    @pytest.mark.asyncio
+    async def test_only_the_close_entry_ends_the_flow(self):
+        flow = _options_flow({"snapshot_mode": "warm"})
+        result = await flow.async_step_finish()
+        assert result["type"] == "create_entry"
+        assert result["data"] == {"snapshot_mode": "warm"}
+
+    @pytest.mark.parametrize(
+        "step",
+        [
+            "connection",
+            "camera_settings",
+            "camera_direct",
+            "camera_restream",
+            "snapshot_settings",
+            "dp_scan_mode",
+            "assign_roles",
+            "capture_review",
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_every_sub_step_offers_a_way_back(self, step):
+        hub = _FakeHub(_OptionsProfile({7: "Button"}))
+        flow = _options_flow({}, hub=hub)
+        result = await getattr(flow, f"async_step_{step}")()
+        assert "back" in result["data_schema"], f"{step} has no way back"
+
+    @pytest.mark.parametrize(
+        "step",
+        [
+            "connection",
+            "camera_settings",
+            "camera_direct",
+            "camera_restream",
+            "snapshot_settings",
+            "dp_scan_mode",
+            "firmware_generation",
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_going_back_changes_nothing(self, step):
+        hub = _FakeHub(_OptionsProfile({7: "Button"}))
+        hub.profile.firmware_version = "v5"
+        flow = _options_flow({}, hub=hub)
+
+        result = await getattr(flow, f"async_step_{step}")({"back": True})
+
+        assert result["type"] == "menu"
+        assert flow.hass.config_entries.option_writes == []
+        assert flow.hass.config_entries.data_writes == []
+
+    @pytest.mark.asyncio
+    async def test_editing_a_datapoint_returns_to_the_list_not_to_nothing(self):
+        """Submitting used to close the whole dialog, one datapoint at a time."""
+        hub = _FakeHub(_OptionsProfile({7: "Button"}))
+        flow = _options_flow({}, hub=hub)
+        flow._editing_dp_id = 7
+
+        result = await flow.async_step_dp_edit(
+            {"name": "Doorbell", "entity_type": "binary_sensor"}
+        )
+
+        assert result["step_id"] == "dp_list"
+        assert hub.updated == [(7, "Doorbell", "binary_sensor")]
+        assert flow.hass.config_entries.reloads == ["1"]
+
+    @pytest.mark.asyncio
+    async def test_the_datapoint_list_offers_a_way_back(self):
+        flow = _options_flow({}, hub=_FakeHub(_OptionsProfile({})))
+        result = await flow.async_step_dp_list()
+        assert "__back__" in result["data_schema"].value_for("dp_select").container
+
+        back = await flow.async_step_dp_list({"dp_select": "__back__"})
+        assert back["type"] == "menu"
+
+    @pytest.mark.asyncio
+    async def test_assigning_roles_returns_to_the_menu(self):
+        hub = _FakeHub(_OptionsProfile({185: "Button"}))
+        flow = _options_flow({}, hub=hub)
+        flow._pending_dps = [_dp(185)]
+
+        result = await flow.async_step_assign_roles(
+            {"doorbell_button": "185", "motion": config_flow.ROLE_NONE,
+             "record_switch": config_flow.ROLE_NONE}
+        )
+
+        assert result["type"] == "menu"
+        assert hub.applied[2]["doorbell_button"] == 185
+
+    @pytest.mark.asyncio
+    async def test_a_saved_screen_writes_options_without_closing(self):
+        """Saving mid-flow is the same write async_create_entry would have done."""
+        flow = _options_flow({}, hub=_FakeHub(_OptionsProfile({})))
+        result = await flow._async_save_options({"snapshot_mode": "warm"})
+
+        assert result["type"] == "menu"
+        assert flow.hass.config_entries.option_writes == [{"snapshot_mode": "warm"}]
+        assert flow._config_entry.options == {"snapshot_mode": "warm"}
+
+
+# --------------------------------------------------------------------------
+# The live capture screen
+# --------------------------------------------------------------------------
+
+
+class _FakeCapture:
+    def __init__(self, found, elapsed=1.0, running=True):
+        self.found = list(found)
+        self.elapsed = elapsed
+        self.running = running
+        self.stopped = 0
+
+    def stop(self):
+        self.stopped += 1
+        self.running = False
+
+
+class TestCaptureScreen:
+    def test_a_value_with_braces_cannot_blank_the_screen(self):
+        """Placeholders go through a message formatter that owns { and }."""
+        assert "{" not in config_flow.safe_placeholder('{"cmd": 1}')
+        assert "}" not in config_flow.safe_placeholder('{"cmd": 1}')
+
+    def test_a_long_value_is_cut_down_to_a_list_item(self):
+        assert len(config_flow.short_value("x" * 200)) <= 42
+
+    def test_the_detail_shows_what_each_datapoint_carried(self):
+        detail = config_flow.capture_detail([_dp(185, "raw", values=["aa", "bb"])])
+        assert "DP 185" in detail
+        assert "'aa'" in detail and "'bb'" in detail
+
+    def test_the_datapoint_that_just_moved_is_marked(self):
+        quiet = _dp(101, values=[1, 1])
+        loud = _dp(185, "raw", values=["a", "b"])
+        loud.observations[-1].at = 99.0
+        detail = config_flow.capture_detail(
+            [quiet, loud], config_flow.last_reported_dps(None, [quiet, loud])
+        )
+        assert "← just now" in detail.splitlines()[1]
+        assert "← just now" not in detail.splitlines()[0]
+
+    def test_everything_from_the_same_frame_is_marked_together(self):
+        """A press often lands several datapoints in one status frame."""
+        first = _dp(101, values=[1, 1])
+        second = _dp(102, values=[1, 1])
+        assert config_flow.last_reported_dps(None, [first, second]) == {101, 102}
+
+    def test_a_capture_that_knows_its_own_answer_is_believed(self):
+        capture = types.SimpleNamespace(last_dp_ids=[185])
+        assert config_flow.last_reported_dps(capture, [_dp(101, values=[1, 1])]) == {185}
+
+    def test_nothing_reported_is_not_the_same_as_gone_quiet(self):
+        assert config_flow.capture_idle_seconds([], now=100.0) is None
+        assert config_flow.capture_should_stop([], elapsed=30.0, now=100.0) is None
+
+    def test_a_device_that_has_gone_quiet_ends_the_session(self):
+        found = [_dp(185, values=["a", "b"])]  # last observation at t=1.0
+        assert config_flow.capture_should_stop(found, elapsed=60.0, now=2.0) is None
+        assert (
+            config_flow.capture_should_stop(
+                found, elapsed=60.0, now=1.0 + config_flow.LIVE_CAPTURE_IDLE_SECONDS
+            )
+            == "gone_quiet"
+        )
+
+    def test_a_forgotten_session_ends_anyway(self):
+        assert (
+            config_flow.capture_should_stop(
+                [], elapsed=config_flow.LIVE_CAPTURE_MAX_SECONDS, now=0.0
+            )
+            == "time_limit"
+        )
+
+    @pytest.mark.asyncio
+    async def test_the_screen_refreshes_itself_instead_of_waiting_for_a_click(self):
+        capture = _FakeCapture([_dp(185, "raw", values=["a", "b"])], elapsed=4.0)
+        # Recent enough that the "device has gone quiet" cut-off does not fire.
+        capture.found[0].observations[-1].at = time.time()
+        flow = _options_flow({}, hub=_FakeHub(_OptionsProfile({}), capture=capture))
+
+        result = await flow.async_step_live_capture()
+
+        assert result["type"] == "progress"
+        assert result["progress_action"] == "live_capture"
+        assert result["progress_task"], "a progress step without a task never resumes"
+        assert "DP 185" in result["description_placeholders"]["detail"]
+
+    @pytest.mark.asyncio
+    async def test_a_quiet_device_moves_on_to_the_review(self):
+        capture = _FakeCapture([_dp(185, "raw", values=["a", "b"])], elapsed=60.0)
+        flow = _options_flow({}, hub=_FakeHub(_OptionsProfile({}), capture=capture))
+
+        result = await flow.async_step_live_capture()
+
+        assert result["type"] == "progress_done"
+        assert result["next_step_id"] == "capture_review"
+        assert capture.stopped == 1
+
+    @pytest.mark.asyncio
+    async def test_a_disconnected_device_says_so_instead_of_starting(self):
+        flow = _options_flow({}, hub=_FakeHub(_OptionsProfile({}), available=False))
+        result = await flow.async_step_live_capture()
+        assert result["errors"] == {"base": "device_unavailable"}
+
+    def test_closing_the_dialog_stops_the_capture_without_losing_it(self):
+        """Closing is how you stop, so it must not read as throwing away."""
+        capture = _FakeCapture([_dp(185, "raw", values=["a", "b"])])
+        hub = _FakeHub(_OptionsProfile({}), capture=capture)
+        flow = _options_flow({}, hub=hub)
+
+        flow.async_remove()
+
+        assert capture.stopped == 1
+        assert hub.live_capture is capture, "the session must survive the dialog"
+
+    def test_removing_a_flow_with_no_capture_is_harmless(self):
+        _options_flow({}, hub=_FakeHub(_OptionsProfile({}))).async_remove()
+        _options_flow({}, hub=None).async_remove()
+
+    @pytest.mark.asyncio
+    async def test_the_review_can_be_reached_without_a_capture(self):
+        flow = _options_flow({}, hub=_FakeHub(_OptionsProfile({})))
+        result = await flow.async_step_capture_review()
+        assert result["errors"] == {"base": "no_capture_session"}
+
+    @pytest.mark.asyncio
+    async def test_the_review_stops_a_session_that_is_still_running(self):
+        capture = _FakeCapture([_dp(185, "raw", values=["a", "b"])])
+        flow = _options_flow({}, hub=_FakeHub(_OptionsProfile({}), capture=capture))
+
+        result = await flow.async_step_capture_review()
+
+        assert capture.stopped == 1
+        assert "185" in result["data_schema"].value_for("selected_dps").options
+
+
+# --------------------------------------------------------------------------
+# The split has to be visible in the translations too
+# --------------------------------------------------------------------------
+
+
+class TestSplitTranslations:
+    def test_the_snapshot_trigger_moved_to_the_snapshot_screen(self, strings):
+        steps = strings["options"]["step"]
+        for camera_step in ("camera_settings", "camera_direct", "camera_restream"):
+            assert "snapshot_trigger_dps" not in steps[camera_step]["data"]
+        assert "snapshot_trigger_dps" in steps["snapshot_options"]["data"]
+
+    def test_the_camera_screens_do_not_offer_both_routes_at_once(self, strings):
+        steps = strings["options"]["step"]
+        assert "stream_url_override" not in steps["camera_direct"]["data"]
+        assert "rtsp_port" not in steps["camera_restream"]["data"]
+
+    def test_the_measured_numbers_are_where_the_choice_is_made(self, strings):
+        """Nobody picks a restreamer, or a snapshot mode, without a reason."""
+        assert "15.94" in strings["options"]["step"]["camera_settings"]["description"]
+        assert "5.86" in strings["options"]["step"]["snapshot_settings"]["description"]
+
+    def test_force_record_on_says_what_it_depends_on(self, strings):
+        text = strings["options"]["step"]["camera_settings"]["data_description"][
+            "force_record_on"
+        ]
+        assert "record switch" in text
+        assert "{record_role}" in text
+
+    def test_every_step_with_a_back_field_names_it(self, strings):
+        steps = strings["options"]["step"]
+        for step_id, step in steps.items():
+            if "back" in step.get("data", {}):
+                assert step["data"]["back"], f"{step_id} has an unlabelled back"
+
+    def test_the_capture_screen_says_that_closing_is_how_you_stop(self, strings):
+        text = strings["options"]["progress"]["live_capture"]
+        assert "Close this dialog" in text
+        assert "nothing is lost" in text
