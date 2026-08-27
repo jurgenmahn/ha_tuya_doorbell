@@ -104,10 +104,35 @@ PRODUCT_KEY_DEVICE_TYPE: dict[str, str] = {
     # Add more product keys as they are discovered
 }
 
-# Well-known DP IDs
+# Well-known DP IDs.
+#
+# These are seeds, not behaviour. They are the numbers this integration was
+# first written against, on one LSC model with one firmware. Datapoint numbers
+# move between firmware revisions and between models -- which is exactly why
+# the integration used to do nothing at all on other people's doorbells. Use
+# them to propose roles after a scan; never to decide what a datapoint means.
 DP_RECORD_SWITCH = 101
 DP_DOORBELL_BUTTON = 185
 DP_MOTION_DETECTION = 115
+
+# Roles: what a datapoint *does*, as opposed to the number it happens to carry.
+# Everything that used to compare a DP number now asks the device profile which
+# datapoint currently holds a role. A role that is not in the profile means the
+# behaviour is off -- there is no falling back to a number, because guessing is
+# what broke this in the first place.
+ROLE_DOORBELL_BUTTON = "doorbell_button"
+ROLE_MOTION = "motion"
+ROLE_RECORD_SWITCH = "record_switch"
+
+ROLES: tuple[str, ...] = (ROLE_DOORBELL_BUTTON, ROLE_MOTION, ROLE_RECORD_SWITCH)
+
+# Used to propose roles after a scan, and to give profiles written before roles
+# existed something sensible on first load. Nothing reads this at runtime.
+DEFAULT_ROLE_DPS: dict[str, int] = {
+    ROLE_DOORBELL_BUTTON: DP_DOORBELL_BUTTON,
+    ROLE_MOTION: DP_MOTION_DETECTION,
+    ROLE_RECORD_SWITCH: DP_RECORD_SWITCH,
+}
 
 # Event types
 EVENT_BUTTON_PRESS = f"{DOMAIN}_button_press"
@@ -217,8 +242,41 @@ KNOWN_DPS_V5: dict[int, dict] = {
     185: {"name": "Doorbell Button", "dp_type": DP_TYPE_RAW, "entity_type": ENTITY_BINARY_SENSOR, "is_event": True},
 }
 
-# Combined known DPs (union of v4 and v5 — used as fallback)
+# Firmware generation -> known DP table.
+KNOWN_DPS_BY_FIRMWARE: dict[str, dict[int, dict]] = {
+    "4": KNOWN_DPS_V4,
+    "5": KNOWN_DPS_V5,
+}
+
+# Union of both generations, kept only as a last resort for a device whose
+# firmware is unknown.
+#
+# Be careful with it: where v4 and v5 disagree, v5 wins silently. DP 110 is
+# "SD Card Status" on v4 and "Basic OSD" on v5; DP 134 is "Vision Flip" against
+# "Chime Switch". A v4 device read through this table therefore gets the wrong
+# name, the wrong type and the wrong entity. Prefer known_dps_for().
 KNOWN_DPS: dict[int, dict] = {**KNOWN_DPS_V4, **KNOWN_DPS_V5}
+
+# Where the two generations disagree, so callers can say so instead of picking.
+AMBIGUOUS_DPS: frozenset[int] = frozenset(
+    dp_id
+    for dp_id in KNOWN_DPS_V4.keys() & KNOWN_DPS_V5.keys()
+    if KNOWN_DPS_V4[dp_id] != KNOWN_DPS_V5[dp_id]
+)
+
+
+def known_dps_for(firmware_version: str | None) -> dict[int, dict]:
+    """Return the known-DP table for a firmware generation.
+
+    Falls back to the union when the generation is unknown, which is a guess --
+    see AMBIGUOUS_DPS for the datapoints where that guess can be wrong.
+    """
+    if firmware_version:
+        generation = str(firmware_version).strip().lstrip("vV").split(".")[0]
+        table = KNOWN_DPS_BY_FIRMWARE.get(generation)
+        if table is not None:
+            return table
+    return KNOWN_DPS
 
 
 def mask_credential(value: str) -> str:

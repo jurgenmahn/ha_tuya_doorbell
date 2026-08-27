@@ -6,9 +6,11 @@ import json
 import logging
 import time
 from dataclasses import asdict, dataclass, field
+from dataclasses import fields as dataclass_fields
 from typing import Any
 
 from .const import (
+    DEFAULT_ROLE_DPS,
     DOMAIN,
     DP_TYPE_BOOL,
     DP_TYPE_ENUM,
@@ -21,6 +23,8 @@ from .const import (
     ENTITY_SENSOR,
     ENTITY_SWITCH,
     KNOWN_DPS,
+    ROLES,
+    known_dps_for,
 )
 from .dp_discovery import DiscoveredDP
 
@@ -44,6 +48,11 @@ class DPDefinition:
     min_value: int | None = None
     max_value: int | None = None
     enum_values: list[str] | None = None
+    # Everything below used to be decided by comparing dp_id against a constant,
+    # which is why the integration only ever worked on one firmware.
+    device_class: str | None = None
+    value_map: dict[int, str] | None = None
+    carries_image_url: bool = False
 
 
 @dataclass
@@ -55,10 +64,128 @@ class DeviceProfile:
     firmware_version: str | None = None
     discovery_timestamp: str = ""
     protocol_version: str = "3.3"
+    # Role name -> dp_id. The single place that says what this device's
+    # datapoints mean. Empty is a valid state: it means nothing is claimed, and
+    # the behaviour that depends on a role stays off rather than guessing.
+    roles: dict[str, int] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.discovery_timestamp:
             self.discovery_timestamp = time.strftime("%Y-%m-%dT%H:%M:%S")
+
+    def role_dp(self, role: str) -> int | None:
+        """Which datapoint currently holds this role, if any."""
+        return self.roles.get(role)
+
+    def role_of(self, dp_id: int) -> str | None:
+        """Which role this datapoint holds, if any."""
+        for role, claimed in self.roles.items():
+            if claimed == dp_id:
+                return role
+        return None
+
+    def set_role(self, role: str, dp_id: int | None) -> None:
+        """Assign a role to a datapoint, or clear it with None.
+
+        A role belongs to exactly one datapoint, so assigning it takes it away
+        from whichever datapoint held it before.
+        """
+        if role not in ROLES:
+            raise ValueError(f"unknown role: {role}")
+        if dp_id is None:
+            self.roles.pop(role, None)
+            return
+        self.roles[role] = dp_id
+
+    def seed_roles(self) -> list[str]:
+        """Propose roles for datapoints that match the original LSC numbering.
+
+        Only fills roles that are still unclaimed, and only when the profile
+        actually contains that datapoint -- a number this device never reports
+        is not evidence of anything. Returns the roles that were filled, so the
+        caller can tell the user what was assumed.
+        """
+        filled: list[str] = []
+        for role, dp_id in DEFAULT_ROLE_DPS.items():
+            if role in self.roles or dp_id not in self.discovered_dps:
+                continue
+            self.roles[role] = dp_id
+            filled.append(role)
+        return filled
+
+
+def _definition_from_dict(data: dict[str, Any]) -> DPDefinition:
+    """Rebuild a DPDefinition from stored JSON.
+
+    Unknown keys are dropped rather than raising: a profile written by a newer
+    version must not make an older one refuse to start. Integer keys in
+    value_map are restored, because JSON has no integer keys and a datapoint
+    reporting 1 would otherwise never match the string "1".
+    """
+    fields = {f.name for f in dataclass_fields(DPDefinition)}
+    unknown = set(data) - fields
+    if unknown:
+        _LOGGER.debug(
+            "Ignoring unknown key(s) %s in stored definition for DP %s",
+            ", ".join(sorted(unknown)), data.get("dp_id"),
+        )
+    clean = {k: v for k, v in data.items() if k in fields}
+
+    value_map = clean.get("value_map")
+    if isinstance(value_map, dict):
+        restored: dict[int, str] = {}
+        for key, label in value_map.items():
+            try:
+                restored[int(key)] = label
+            except (TypeError, ValueError):
+                _LOGGER.debug("Dropping non-numeric value_map key %r", key)
+        clean["value_map"] = restored or None
+
+    return DPDefinition(**clean)
+
+
+def _profile_from_dict(data: dict[str, Any]) -> DeviceProfile:
+    """Rebuild a DeviceProfile from stored JSON, roles included."""
+    profile = DeviceProfile(
+        device_id=data["device_id"],
+        firmware_version=data.get("firmware_version"),
+        discovery_timestamp=data.get("discovery_timestamp", ""),
+        protocol_version=data.get("protocol_version", "3.3"),
+        roles={
+            role: int(dp_id)
+            for role, dp_id in (data.get("roles") or {}).items()
+            if role in ROLES
+        },
+    )
+    for dp_str, dp_data in data.get("dps", {}).items():
+        profile.discovered_dps[int(dp_str)] = _definition_from_dict(dp_data)
+
+    if not profile.roles:
+        # Written before roles existed. Seeding keeps a working install working;
+        # without it the doorbell would go quiet on upgrade.
+        filled = profile.seed_roles()
+        if filled:
+            _LOGGER.info(
+                "Device %s had no roles stored; assumed %s from the original "
+                "LSC numbering. Re-run the datapoint scan if that is wrong.",
+                profile.device_id, ", ".join(filled),
+            )
+    return profile
+
+
+def _profile_to_dict(profile: DeviceProfile) -> dict[str, Any]:
+    """Serialise a DeviceProfile for storage or export."""
+    return {
+        "device_id": profile.device_id,
+        "firmware_version": profile.firmware_version,
+        "discovery_timestamp": profile.discovery_timestamp,
+        "protocol_version": profile.protocol_version,
+        "roles": dict(profile.roles),
+        "dps": {
+            str(dp_id): asdict(dp_def)
+            for dp_id, dp_def in profile.discovered_dps.items()
+        },
+    }
 
 
 class DPRegistry:
@@ -67,9 +194,16 @@ class DPRegistry:
     def __init__(self) -> None:
         self._profiles: dict[str, DeviceProfile] = {}
 
-    def get_known_dp(self, dp_id: int) -> DPDefinition | None:
-        """Look up a DP in the known definitions table."""
-        known = KNOWN_DPS.get(dp_id)
+    def get_known_dp(
+        self, dp_id: int, firmware_version: str | None = None
+    ) -> DPDefinition | None:
+        """Look up a DP in the known definitions table for this firmware.
+
+        Without a firmware version this falls back to the union of both
+        generations, where v5 wins any disagreement -- see AMBIGUOUS_DPS.
+        """
+        table = known_dps_for(firmware_version) if firmware_version else KNOWN_DPS
+        known = table.get(dp_id)
         if not known:
             return None
         return DPDefinition(
@@ -124,19 +258,10 @@ class DPRegistry:
         store = self._get_store(hass)
         self._profiles[profile.device_id] = profile
 
-        # Save all profiles
-        data = {}
-        for dev_id, prof in self._profiles.items():
-            data[dev_id] = {
-                "device_id": prof.device_id,
-                "firmware_version": prof.firmware_version,
-                "discovery_timestamp": prof.discovery_timestamp,
-                "protocol_version": prof.protocol_version,
-                "dps": {
-                    str(dp_id): asdict(dp_def)
-                    for dp_id, dp_def in prof.discovered_dps.items()
-                },
-            }
+        data = {
+            dev_id: _profile_to_dict(prof)
+            for dev_id, prof in self._profiles.items()
+        }
 
         await store.async_save(data)
         _LOGGER.debug("Saved DP profile for device %s", profile.device_id)
@@ -151,18 +276,7 @@ class DPRegistry:
         if not data or device_id not in data:
             return None
 
-        prof_data = data[device_id]
-        profile = DeviceProfile(
-            device_id=prof_data["device_id"],
-            firmware_version=prof_data.get("firmware_version"),
-            discovery_timestamp=prof_data.get("discovery_timestamp", ""),
-            protocol_version=prof_data.get("protocol_version", "3.3"),
-        )
-
-        for dp_str, dp_data in prof_data.get("dps", {}).items():
-            dp_id = int(dp_str)
-            profile.discovered_dps[dp_id] = DPDefinition(**dp_data)
-
+        profile = _profile_from_dict(data[device_id])
         self._profiles[device_id] = profile
         return profile
 
@@ -174,46 +288,17 @@ class DPRegistry:
             return
 
         for dev_id, prof_data in data.items():
-            profile = DeviceProfile(
-                device_id=prof_data["device_id"],
-                firmware_version=prof_data.get("firmware_version"),
-                discovery_timestamp=prof_data.get("discovery_timestamp", ""),
-                protocol_version=prof_data.get("protocol_version", "3.3"),
-            )
-            for dp_str, dp_data in prof_data.get("dps", {}).items():
-                dp_id = int(dp_str)
-                profile.discovered_dps[dp_id] = DPDefinition(**dp_data)
-            self._profiles[dev_id] = profile
+            self._profiles[dev_id] = _profile_from_dict(prof_data)
 
     @staticmethod
     def export_profile(profile: DeviceProfile) -> str:
         """Export a device profile as JSON string."""
-        data = {
-            "device_id": profile.device_id,
-            "firmware_version": profile.firmware_version,
-            "discovery_timestamp": profile.discovery_timestamp,
-            "protocol_version": profile.protocol_version,
-            "dps": {
-                str(dp_id): asdict(dp_def)
-                for dp_id, dp_def in profile.discovered_dps.items()
-            },
-        }
-        return json.dumps(data, indent=2)
+        return json.dumps(_profile_to_dict(profile), indent=2)
 
     @staticmethod
     def import_profile(json_str: str) -> DeviceProfile:
         """Import a device profile from JSON string."""
-        data = json.loads(json_str)
-        profile = DeviceProfile(
-            device_id=data["device_id"],
-            firmware_version=data.get("firmware_version"),
-            discovery_timestamp=data.get("discovery_timestamp", ""),
-            protocol_version=data.get("protocol_version", "3.3"),
-        )
-        for dp_str, dp_data in data.get("dps", {}).items():
-            dp_id = int(dp_str)
-            profile.discovered_dps[dp_id] = DPDefinition(**dp_data)
-        return profile
+        return _profile_from_dict(json.loads(json_str))
 
     @staticmethod
     def _get_store(hass: Any) -> Any:
