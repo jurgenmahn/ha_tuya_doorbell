@@ -1,70 +1,57 @@
-"""Camera platform for LSC Tuya Doorbell — RTSP stream with ffmpeg snapshot."""
+"""Camera platform for LSC Tuya Doorbell — RTSP stream and shared snapshots."""
 
 from __future__ import annotations
 
-import asyncio
 import logging
+from typing import Any
 
-import aiohttp
 from homeassistant.components.camera import Camera, CameraEntityFeature
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
-from homeassistant.helpers.aiohttp_client import async_get_clientsession
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .const import (
-    CONF_ONVIF_PASSWORD,
-    CONF_ONVIF_USERNAME,
-    CONF_RTSP_PATH,
-    CONF_RTSP_PORT,
-    CONF_STILL_IMAGE_URL_OVERRIDE,
-    CONF_STREAM_URL_OVERRIDE,
-    DEFAULT_ONVIF_USERNAME,
-    DEFAULT_RTSP_PATH,
-    DEFAULT_RTSP_PORT,
-    DOMAIN,
-)
+from .const import CONF_STILL_IMAGE_URL_OVERRIDE, DOMAIN
+from .entity_meta import resolve_stream_source
 from .hub import DeviceHub
 
 _LOGGER = logging.getLogger(__name__)
-
-# Snapshots sit in front of notifications, so fail fast rather than hang.
-CLIENT_TIMEOUT = aiohttp.ClientTimeout(total=10)
 
 
 async def async_setup_entry(
     hass: HomeAssistant,
     config_entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback,
+    async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
-    """Set up the camera entity if ONVIF password is configured."""
+    """Set up the camera entity when there is anything to show."""
     hub: DeviceHub = hass.data[DOMAIN][config_entry.entry_id]
 
-    # Check for ONVIF password in options first, then entry data
-    password = config_entry.options.get(
-        CONF_ONVIF_PASSWORD,
-        config_entry.data.get(CONF_ONVIF_PASSWORD, ""),
+    stream_source = resolve_stream_source(
+        config_entry.options, config_entry.data, hub.host
     )
+    still_url = (config_entry.options.get(CONF_STILL_IMAGE_URL_OVERRIDE) or "").strip()
 
-    if not password:
-        _LOGGER.debug("No ONVIF password configured — skipping camera entity")
+    if not stream_source and not still_url:
+        _LOGGER.debug(
+            "No stream URL and no still image URL for %s — skipping camera entity",
+            hub.device_id,
+        )
         return
 
     async_add_entities([LscTuyaCamera(hub, config_entry)])
 
 
 class LscTuyaCamera(Camera):
-    """Camera entity providing RTSP live stream and ffmpeg snapshots."""
+    """Camera entity providing the RTSP live stream and snapshots."""
 
     _attr_has_entity_name = True
+    _attr_name = "Camera"
+    _attr_supported_features = CameraEntityFeature.STREAM
 
     def __init__(self, hub: DeviceHub, config_entry: ConfigEntry) -> None:
         super().__init__()
         self._hub = hub
         self._config_entry = config_entry
-        self._attr_name = "Camera"
         self._attr_unique_id = f"{hub.device_id}_camera"
-        self._attr_supported_features = CameraEntityFeature.STREAM
 
     @property
     def device_info(self):
@@ -79,93 +66,40 @@ class LscTuyaCamera(Camera):
     def is_streaming(self) -> bool:
         return self._hub.available
 
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Expose what the snapshot subsystem is actually doing.
+
+        Without this, a degraded mode (buffer that could not start, a still URL
+        answering 500) is only visible in the log.
+        """
+        return {"snapshot_status": self._hub.snapshots.status}
+
+    async def async_added_to_hass(self) -> None:
+        """Follow the connection so availability is not stuck on a stale value."""
+        await super().async_added_to_hass()
+        self.async_on_remove(
+            self._hub.on_connection_change(self._handle_connection_change)
+        )
+
+    @callback
+    def _handle_connection_change(self, connected: bool) -> None:
+        self.async_write_ha_state()
+
     async def stream_source(self) -> str | None:
         """Return the RTSP stream URL."""
-        return self._build_rtsp_url()
+        return resolve_stream_source(
+            self._config_entry.options, self._config_entry.data, self._hub.host
+        )
 
     async def async_camera_image(
         self, width: int | None = None, height: int | None = None
     ) -> bytes | None:
-        """Return a single frame.
+        """Return the newest frame from the shared snapshot provider.
 
-        Prefers a configured still image URL, which lets a restreamer hand
-        over a ready-made JPEG. Without it the frame is pulled off the RTSP
-        stream with ffmpeg, which costs a decode per snapshot and opens an
-        extra session on a camera that may only allow a few.
+        The camera used to fetch a still URL and, when that failed, start its
+        own ffmpeg per thumbnail refresh: 5.9 s for a single grab and 15.9 s
+        when a second one followed shortly after, with no backoff between the
+        failures. The provider keeps one warm source and one grab at a time.
         """
-        still_url = (
-            self._config_entry.options.get(CONF_STILL_IMAGE_URL_OVERRIDE) or ""
-        ).strip()
-        if still_url:
-            try:
-                session = async_get_clientsession(self.hass)
-                async with session.get(still_url, timeout=CLIENT_TIMEOUT) as resp:
-                    resp.raise_for_status()
-                    return await resp.read()
-            except Exception as err:  # noqa: BLE001
-                _LOGGER.warning(
-                    "Still image URL %s failed (%s), falling back to RTSP",
-                    still_url,
-                    err,
-                )
-
-        rtsp_url = self._build_rtsp_url()
-        if not rtsp_url:
-            return None
-
-        try:
-            process = await asyncio.create_subprocess_exec(
-                "ffmpeg",
-                "-rtsp_transport", "tcp",
-                "-i", rtsp_url,
-                "-vframes", "1",
-                "-f", "image2",
-                "pipe:1",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            stdout, stderr = await asyncio.wait_for(
-                process.communicate(), timeout=15.0
-            )
-            if process.returncode == 0 and stdout:
-                return stdout
-            _LOGGER.debug(
-                "ffmpeg snapshot failed (rc=%s): %s",
-                process.returncode,
-                stderr.decode(errors="replace")[:200] if stderr else "no output",
-            )
-        except asyncio.TimeoutError:
-            _LOGGER.warning("ffmpeg snapshot timed out for %s", self._hub.device_id)
-        except FileNotFoundError:
-            _LOGGER.error("ffmpeg not found — install ffmpeg for camera snapshots")
-        except Exception:
-            _LOGGER.debug("Camera snapshot error", exc_info=True)
-
-        return None
-
-    def _build_rtsp_url(self) -> str | None:
-        """Construct the RTSP URL from config.
-
-        A configured stream URL override wins over the URL built from
-        host, port and path. That lets the stream come from a restreamer
-        (go2rtc, mediamtx, ...) while the hub keeps talking to the
-        doorbell directly on the local Tuya port, including its own IP
-        rediscovery.
-        """
-        opts = self._config_entry.options
-        data = self._config_entry.data
-
-        override = (opts.get(CONF_STREAM_URL_OVERRIDE) or "").strip()
-        if override:
-            return override
-
-        password = opts.get(CONF_ONVIF_PASSWORD, data.get(CONF_ONVIF_PASSWORD, ""))
-        if not password:
-            return None
-
-        username = opts.get(CONF_ONVIF_USERNAME, DEFAULT_ONVIF_USERNAME)
-        port = opts.get(CONF_RTSP_PORT, DEFAULT_RTSP_PORT)
-        path = opts.get(CONF_RTSP_PATH, DEFAULT_RTSP_PATH)
-        host = self._hub.host
-
-        return f"rtsp://{username}:{password}@{host}:{port}{path}"
+        return await self._hub.snapshots.async_grab()
