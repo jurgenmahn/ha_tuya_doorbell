@@ -216,6 +216,13 @@ class DPRegistry:
             max_value=known.get("max"),
             enum_values=list(known["options"].values()) if "options" in known else None,
             options=known.get("options"),
+            # The self-describing fields. Without forwarding them, a known
+            # datapoint arrives at the entity platforms saying nothing about
+            # itself -- which is the situation those fields were added to end.
+            icon=known.get("icon"),
+            device_class=known.get("device_class"),
+            value_map=known.get("value_map"),
+            carries_image_url=known.get("carries_image_url", False),
         )
 
     def merge_discovered(

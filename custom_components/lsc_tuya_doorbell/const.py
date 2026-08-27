@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 DOMAIN = "lsc_tuya_doorbell"
-VERSION = "2.8.0"
 
 # Connection defaults
 DEFAULT_PORT = 6668
@@ -72,6 +71,21 @@ DEFAULT_RTSP_PATH = "/Streaming/Channels/101"
 DEFAULT_SNAPSHOT_PATH = "/config/www/doorbell"
 MAX_SNAPSHOTS = 10
 
+# Home Assistant serves <config>/www as /local. Only files below that directory
+# can be published as a URL; anything else gets a path and no URL, instead of a
+# /local/ link that resolves to nothing.
+WWW_DIRECTORY = "www"
+LOCAL_URL_PREFIX = "/local/"
+DEFAULT_WWW_ROOT = "/config/www"
+
+# Fetching a configured still-image URL sits in front of a notification, so it
+# fails fast rather than hanging the snapshot task.
+STILL_IMAGE_TIMEOUT = 10  # seconds
+
+# How long to wait before pushing the record switch back on after the device
+# turned it off by itself.
+RECORD_RECOVERY_DELAY = 2  # seconds
+
 # DP types
 DP_TYPE_BOOL = "bool"
 DP_TYPE_INT = "int"
@@ -134,6 +148,23 @@ DEFAULT_ROLE_DPS: dict[str, int] = {
     ROLE_RECORD_SWITCH: DP_RECORD_SWITCH,
 }
 
+# Snapshot configuration.
+#
+# Defaults live in video.py, which deliberately imports nothing from here, so
+# there is one source of truth and no cycle.
+CONF_SNAPSHOT_MODE = "snapshot_mode"
+CONF_SNAPSHOT_BUFFER_PATH = "snapshot_buffer_path"
+CONF_SNAPSHOT_BUFFER_SECONDS = "snapshot_buffer_seconds"
+CONF_SNAPSHOT_DELAY_MS = "snapshot_delay_ms"
+
+# How far back a snapshot may reach. The device reports a press several seconds
+# late, so a picture of "now" shows whoever pressed it already leaving; this is
+# the compensation for that, and only the buffer mode can honour it.
+MAX_SNAPSHOT_DELAY_MS = 8000
+
+MIN_BUFFER_SECONDS = 5
+MAX_BUFFER_SECONDS = 300
+
 # Event types
 EVENT_BUTTON_PRESS = f"{DOMAIN}_button_press"
 EVENT_MOTION_DETECT = f"{DOMAIN}_motion_detect"
@@ -141,9 +172,41 @@ EVENT_CONNECTED = f"{DOMAIN}_connected"
 EVENT_DISCONNECTED = f"{DOMAIN}_disconnected"
 EVENT_IP_CHANGED = f"{DOMAIN}_ip_changed"
 EVENT_DP_DISCOVERED = f"{DOMAIN}_dp_discovered"
+EVENT_SNAPSHOT_READY = f"{DOMAIN}_snapshot_ready"
 
-# Platforms
-PLATFORMS = ["binary_sensor", "sensor", "switch", "select", "number", "camera"]
+# Fired by the service handler, which carries a different payload than the hub's
+# own EVENT_DP_DISCOVERED. They used to share a name, so an automation listening
+# for one could receive either shape depending on where it came from.
+EVENT_DP_SCAN_RESULTS = f"{DOMAIN}_dp_scan_results"
+
+# Fired for a datapoint whose definition says is_event but that holds no role.
+# Without it such a datapoint would only ever move an entity and stay invisible
+# to automations.
+EVENT_DP_EVENT = f"{DOMAIN}_dp_event"
+
+# Every device event is fired twice: once under the stable name above, and once
+# under "<name>_<device slug>". The slug comes from the editable device name, so
+# renaming a device silently breaks every automation built on it. New
+# automations filter on device_id in the payload instead.
+DEPRECATED_SLUG_EVENTS = True
+
+# Repair issue raised when no datapoint claims the doorbell-button role: without
+# it the hub cannot know which datapoint is the bell, so the button press event
+# and its snapshot stay off. The fix is a datapoint scan.
+ISSUE_NO_DOORBELL_ROLE = "no_doorbell_role"
+
+# Platforms. "event" is Home Assistant's own event entity, which is what an
+# automation should trigger on; the binary sensor stays for dashboards that show
+# a momentary "someone is at the door".
+PLATFORMS = [
+    "binary_sensor",
+    "event",
+    "sensor",
+    "switch",
+    "select",
+    "number",
+    "camera",
+]
 
 # SD Card status mapping
 SD_STATUS_MAP = {
@@ -178,8 +241,19 @@ KNOWN_DPS_V4: dict[int, dict] = {
         "options": {"0": "off", "1": "on"},
     },
     109: {"name": "SD Storage Info", "dp_type": DP_TYPE_STRING, "entity_type": ENTITY_SENSOR},
-    110: {"name": "SD Card Status", "dp_type": DP_TYPE_INT, "entity_type": ENTITY_SENSOR},
-    115: {"name": "Motion Detection", "dp_type": DP_TYPE_RAW, "entity_type": ENTITY_BINARY_SENSOR, "is_event": True},
+    110: {
+        "name": "SD Card Status",
+        "dp_type": DP_TYPE_INT,
+        "entity_type": ENTITY_SENSOR,
+        "value_map": SD_STATUS_MAP,
+    },
+    115: {
+        "name": "Motion Detection",
+        "dp_type": DP_TYPE_RAW,
+        "entity_type": ENTITY_BINARY_SENSOR,
+        "is_event": True,
+        "carries_image_url": True,
+    },
     134: {"name": "Vision Flip", "dp_type": DP_TYPE_BOOL, "entity_type": ENTITY_SWITCH},
     150: {"name": "Chime Switch", "dp_type": DP_TYPE_BOOL, "entity_type": ENTITY_SWITCH},
     151: {
@@ -195,7 +269,17 @@ KNOWN_DPS_V4: dict[int, dict] = {
         "min": 1,
         "max": 10,
     },
-    185: {"name": "Doorbell Button", "dp_type": DP_TYPE_RAW, "entity_type": ENTITY_BINARY_SENSOR, "is_event": True},
+    # No device_class here on purpose: a doorbell is "occupancy" to a binary
+    # sensor and "doorbell" to an event entity, so a single string would be
+    # wrong on one of the two. The role tables in entity_meta.py pick the right
+    # one per platform.
+    185: {
+        "name": "Doorbell Button",
+        "dp_type": DP_TYPE_RAW,
+        "entity_type": ENTITY_BINARY_SENSOR,
+        "is_event": True,
+        "carries_image_url": True,
+    },
 }
 
 # Firmware v5 mappings (different DP numbers for some controls)
@@ -215,9 +299,20 @@ KNOWN_DPS_V5: dict[int, dict] = {
         "entity_type": ENTITY_SELECT,
         "options": {"0": "low", "1": "medium", "2": "high"},
     },
-    109: {"name": "SD Card Status", "dp_type": DP_TYPE_INT, "entity_type": ENTITY_SENSOR},
+    109: {
+        "name": "SD Card Status",
+        "dp_type": DP_TYPE_INT,
+        "entity_type": ENTITY_SENSOR,
+        "value_map": SD_STATUS_MAP,
+    },
     110: {"name": "Basic OSD", "dp_type": DP_TYPE_BOOL, "entity_type": ENTITY_SWITCH},
-    115: {"name": "Motion Detection", "dp_type": DP_TYPE_RAW, "entity_type": ENTITY_BINARY_SENSOR, "is_event": True},
+    115: {
+        "name": "Motion Detection",
+        "dp_type": DP_TYPE_RAW,
+        "entity_type": ENTITY_BINARY_SENSOR,
+        "is_event": True,
+        "carries_image_url": True,
+    },
     134: {"name": "Chime Switch", "dp_type": DP_TYPE_BOOL, "entity_type": ENTITY_SWITCH},
     135: {
         "name": "Chime Volume",
@@ -239,7 +334,17 @@ KNOWN_DPS_V5: dict[int, dict] = {
         "entity_type": ENTITY_SELECT,
         "options": {"1": "event", "2": "continuous"},
     },
-    185: {"name": "Doorbell Button", "dp_type": DP_TYPE_RAW, "entity_type": ENTITY_BINARY_SENSOR, "is_event": True},
+    # No device_class here on purpose: a doorbell is "occupancy" to a binary
+    # sensor and "doorbell" to an event entity, so a single string would be
+    # wrong on one of the two. The role tables in entity_meta.py pick the right
+    # one per platform.
+    185: {
+        "name": "Doorbell Button",
+        "dp_type": DP_TYPE_RAW,
+        "entity_type": ENTITY_BINARY_SENSOR,
+        "is_event": True,
+        "carries_image_url": True,
+    },
 }
 
 # Firmware generation -> known DP table.
