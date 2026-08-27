@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from custom_components.lsc_tuya_doorbell.protocol.encryption import TuyaCipher
-from custom_components.lsc_tuya_doorbell.protocol.constants import UDP_KEY
+from custom_components.lsc_tuya_doorbell.protocol.constants import UDP_KEY, DecryptionError
 
 
 class TestTuyaCipher:
@@ -184,8 +184,82 @@ class TestPKCS7:
             unpadded = TuyaCipher._pkcs7_unpad(padded)
             assert unpadded == data
 
-    def test_invalid_padding_returns_data(self) -> None:
-        # Data with invalid padding byte should be returned as-is
-        data = b"no valid padding here!!"
-        result = TuyaCipher._pkcs7_unpad(data)
-        assert result == data
+    def test_invalid_padding_raises(self) -> None:
+        """Invalid padding must be reported, not silently passed through.
+
+        Returning the data unchanged used to make a wrong local key look like a
+        successful decryption of garbage.
+        """
+        with pytest.raises(DecryptionError):
+            TuyaCipher._pkcs7_unpad(b"no valid padding here!!")
+
+    def test_padding_length_beyond_block_raises(self) -> None:
+        with pytest.raises(DecryptionError):
+            TuyaCipher._pkcs7_unpad(b"\x10\x10")
+
+    def test_empty_input_raises(self) -> None:
+        with pytest.raises(DecryptionError):
+            TuyaCipher._pkcs7_unpad(b"")
+
+
+class TestWrongKeyIsVisible:
+    """A wrong key must surface as an error, never as usable-looking bytes."""
+
+    def test_ecb_wrong_key_raises(self, local_key: bytes) -> None:
+        cipher = TuyaCipher(local_key)
+        ciphertext = cipher.encrypt_ecb(b'{"dps":{"101":true}}')
+        wrong = TuyaCipher(b"wrongkeywrongkey")
+        with pytest.raises(DecryptionError):
+            wrong.decrypt_ecb(ciphertext)
+
+    def test_ecb_unaligned_input_raises(self, local_key: bytes) -> None:
+        cipher = TuyaCipher(local_key)
+        with pytest.raises(DecryptionError):
+            cipher.decrypt_ecb(b"seven bytes not a block")
+
+    def test_gcm_wrong_key_raises_decryption_error(self, local_key: bytes) -> None:
+        cipher = TuyaCipher(local_key)
+        iv = b"123456789012"
+        ciphertext, tag = cipher.encrypt_gcm(b"payload", local_key, iv)
+        with pytest.raises(DecryptionError):
+            cipher.decrypt_gcm(ciphertext, b"wrongkeywrongkey", iv, tag)
+
+    def test_gcm_wrong_aad_raises_decryption_error(self, local_key: bytes) -> None:
+        cipher = TuyaCipher(local_key)
+        iv = b"123456789012"
+        ciphertext, tag = cipher.encrypt_gcm(b"payload", local_key, iv, aad=b"header-a")
+        with pytest.raises(DecryptionError):
+            cipher.decrypt_gcm(ciphertext, local_key, iv, tag, aad=b"header-b")
+
+    def test_udp_decrypt_rejects_unaligned_data(self) -> None:
+        with pytest.raises(DecryptionError):
+            TuyaCipher.decrypt_udp(b"not a whole block")
+
+
+class TestSessionKeyMatchesTinytuya:
+    """Session key derivation checked against tinytuya's known algorithm."""
+
+    def test_v34_is_ecb_of_xored_nonces(self, local_key: bytes) -> None:
+        from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+
+        cipher = TuyaCipher(local_key)
+        client = b"0123456789abcdef"
+        device = b"fedcba9876543210"
+        xored = bytes(a ^ b for a, b in zip(client, device))
+
+        enc = Cipher(algorithms.AES(local_key), modes.ECB()).encryptor()
+        expected = enc.update(xored) + enc.finalize()
+
+        assert cipher.derive_session_key_v34(client, device) == expected
+
+    def test_v35_is_first_16_gcm_ciphertext_bytes(self, local_key: bytes) -> None:
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+        cipher = TuyaCipher(local_key)
+        client = b"0123456789abcdef"
+        device = b"fedcba9876543210"
+        xored = bytes(a ^ b for a, b in zip(client, device))
+
+        expected = AESGCM(local_key).encrypt(client[:12], xored, None)[:16]
+
+        assert cipher.derive_session_key_v35(client, device) == expected
