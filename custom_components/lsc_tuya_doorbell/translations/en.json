@@ -267,7 +267,7 @@
       },
       "snapshot_options": {
         "title": "Snapshot Mode Settings",
-        "description": "Settings for the '{mode}' snapshot mode. Only what this mode actually reads is shown.{buffer_note}{trigger_hint}",
+        "description": "Settings for the {mode} snapshot mode. Only what this mode actually reads is shown.{buffer_note}{trigger_hint}",
         "data": {
           "snapshot_trigger_dps": "Take a snapshot when these datapoints fire",
           "snapshot_buffer_path": "Buffer directory",

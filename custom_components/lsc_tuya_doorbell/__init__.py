@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+
+import homeassistant.helpers.config_validation as cv
 from typing import TYPE_CHECKING, Any, Iterator
 
 if TYPE_CHECKING:
@@ -31,6 +33,12 @@ from .const import (
 from .discovery import DISCOVERY_DATA_KEY
 
 _LOGGER = logging.getLogger(__name__)
+
+# There is nothing to configure in YAML: a doorbell is added through the UI and
+# everything about it lives in its config entry. Saying so explicitly is what
+# hassfest asks for, and it makes a stray lsc_tuya_doorbell: block in
+# configuration.yaml an error rather than something silently ignored.
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 #: Default duration of the passive monitor service, in seconds.
 DEFAULT_MONITOR_DURATION = 30

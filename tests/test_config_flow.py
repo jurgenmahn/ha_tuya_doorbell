@@ -194,6 +194,8 @@ def _install_stubs() -> None:
 
     helpers = _module("homeassistant.helpers")
     cv = _module("homeassistant.helpers.config_validation")
+    # Declared by __init__ to say this integration has no YAML configuration.
+    cv.config_entry_only_config_schema = lambda domain: object()
     cv.multi_select = _MultiSelect
     helpers.config_validation = cv
 
