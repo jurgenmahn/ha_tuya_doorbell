@@ -11,7 +11,6 @@
     "ffmpeg"
   ],
   "documentation": "https://github.com/jurgenmahn/ha_tuya_doorbell",
-  "icon": "mdi:doorbell-video",
   "integration_type": "device",
   "iot_class": "local_push",
   "issue_tracker": "https://github.com/jurgenmahn/ha_tuya_doorbell/issues",
@@ -19,6 +18,5 @@
     "custom_components.lsc_tuya_doorbell"
   ],
   "requirements": [],
-  "version": "3.0.0",
-  "homeassistant": "2025.3.0"
+  "version": "3.0.0"
 }
