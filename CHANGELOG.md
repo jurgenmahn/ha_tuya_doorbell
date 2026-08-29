@@ -5,6 +5,34 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.1.0] - 2026-08-29
+
+### Added
+
+- The recording modes can read video from somewhere other than the camera. Anyone
+  already running a restreamer for other reasons can point the ring buffer at it
+  without routing the camera entity through it as well, which previously meant
+  standing up a second restreamer to look two seconds into the past.
+- A datapoint can be marked as firing an event. The live capture marks likely
+  candidates, but it cannot be decided automatically: a volume slider moved
+  twice reports two values exactly like a button pressed twice.
+- Continuous integration. The HACS and hassfest validators run on every push and
+  weekly, along with the test suite.
+
+### Fixed
+
+- An event entity is now judged stale by whether its datapoint still fires,
+  rather than by its domain -- which is always "event", so it always looked
+  correct while nothing would ever fire it again.
+- Two manifest keys Home Assistant does not recognise, and a placeholder inside
+  single quotes in the translations, both of which hassfest rejects.
+- An integration implementing `async_setup` must declare a config schema. This
+  one has no YAML configuration, and now says so.
+
+### Changed
+
+- DP 255 verified against hardware: it switches the ONVIF service.
+
 ## [3.0.0] - 2026-08-27
 
 A datapoint number is not a meaning. Version 2.x treated DP 185 as "the doorbell
