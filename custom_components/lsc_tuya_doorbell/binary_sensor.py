@@ -132,6 +132,11 @@ class LscTuyaBinarySensor(LscTuyaEntity, BinarySensorEntity):
         self.async_on_remove(
             self._hub.on_snapshot_change(self._handle_snapshot_ready)
         )
+        # Clips update last_clip_url; refresh the attribute without touching the
+        # image entity.
+        self.async_on_remove(
+            self._hub.on_clip_change(self._handle_snapshot_ready)
+        )
 
     async def async_will_remove_from_hass(self) -> None:
         await super().async_will_remove_from_hass()

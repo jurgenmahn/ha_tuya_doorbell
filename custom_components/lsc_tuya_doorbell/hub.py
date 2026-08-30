@@ -393,6 +393,7 @@ class DeviceHub:
         # Snapshot listeners, so an entity can rewrite its state when the
         # picture belonging to an already-fired event finally arrives.
         self._snapshot_callbacks: list[Callable[[str | None], None]] = []
+        self._clip_callbacks: list[Callable[[str | None], None]] = []
 
         # Event counters
         self._event_counters: dict[int, int] = {}
@@ -791,6 +792,33 @@ class DeviceHub:
                     "previous picture", self._device_id, exc_info=True,
                 )
 
+    def on_clip_change(
+        self, callback: Callable[[str | None], None]
+    ) -> Callable[[], None]:
+        """Register a clip callback; returns its unregister function.
+
+        Separate from the snapshot callbacks on purpose: a clip is a video, so it
+        must not poke the image entity (which would show a broken picture, having
+        no still to read).
+        """
+        self._clip_callbacks.append(callback)
+
+        def _unregister() -> None:
+            if callback in self._clip_callbacks:
+                self._clip_callbacks.remove(callback)
+
+        return _unregister
+
+    def _notify_clip_callbacks(self, url: str | None) -> None:
+        for callback in list(self._clip_callbacks):
+            try:
+                callback(url)
+            except Exception:  # noqa: BLE001 - one bad listener must not stop the rest
+                _LOGGER.warning(
+                    "Clip listener failed for %s; last_clip_url may show stale",
+                    self._device_id, exc_info=True,
+                )
+
     # --- Lifecycle ---
 
     def _remove_entities_left_behind_by_a_type_change(self) -> int:
@@ -947,6 +975,7 @@ class DeviceHub:
         self._entity_callbacks.clear()
         self._connection_callbacks.clear()
         self._snapshot_callbacks.clear()
+        self._clip_callbacks.clear()
         _LOGGER.debug("Hub teardown complete for %s", self._device_id)
 
     def absorb_entry_update(self) -> bool:
@@ -1621,9 +1650,9 @@ class DeviceHub:
         self._last_clip_path = target
         self._last_clip_url = url
         _LOGGER.info("Clip saved: %s (url: %s)", target, url)
-        # Refresh the entities that expose last_clip_url as an attribute. The
-        # image entity harmlessly re-reads its (unchanged) still.
-        self._notify_snapshot_callbacks(self._last_snapshot_url)
+        # Refresh only the clip listeners -- the image entity must not be poked,
+        # as it has no still to show and would render broken.
+        self._notify_clip_callbacks(url)
         return True
 
     async def _async_clip_for_event(self, payload: dict[str, Any]) -> None:

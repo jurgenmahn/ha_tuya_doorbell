@@ -5,6 +5,18 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.7.0] - 2026-08-30
+
+### Fixed
+
+- Clip mode no longer shows the still-only **"look back by"** setting. The field
+  list already excluded it, but the form builder bolted it onto every mode with a
+  buffer, so it appeared (and was saved) in clip mode too.
+- The **Test capture** button in clip mode no longer leaves a **broken image** in
+  the snapshot image entity. A clip is a video, so it now notifies its own
+  listeners (refreshing `last_clip_url`) instead of poking the image entity, which
+  had no still to show.
+
 ## [3.6.0] - 2026-08-30
 
 ### Changed

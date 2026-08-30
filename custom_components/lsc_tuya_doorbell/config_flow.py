@@ -1444,6 +1444,7 @@ class LscTuyaDoorbellOptionsFlow(OptionsFlow):
                 new_options[CONF_SNAPSHOT_BUFFER_SECONDS] = int(
                     user_input[CONF_SNAPSHOT_BUFFER_SECONDS]
                 )
+            if CONF_SNAPSHOT_DELAY_MS in fields:
                 new_options[CONF_SNAPSHOT_DELAY_MS] = int(
                     user_input[CONF_SNAPSHOT_DELAY_MS]
                 )
@@ -1496,6 +1497,8 @@ class LscTuyaDoorbellOptionsFlow(OptionsFlow):
                     unit_of_measurement="s",
                 )
             )
+
+        if CONF_SNAPSHOT_DELAY_MS in fields:
             schema[
                 vol.Required(
                     CONF_SNAPSHOT_DELAY_MS,

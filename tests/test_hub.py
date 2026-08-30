@@ -1591,3 +1591,29 @@ class TestTestButtonInClipMode:
         assert provider.clips == [hub.last_clip_path]
         assert hub.last_clip_url is not None
         assert hub._hass.bus.events == []  # a test never rings anything
+
+
+class TestClipDoesNotTouchTheImageEntity:
+    """A clip is a video; poking the still image entity would show a broken
+    picture. Clips notify their own listeners, not the snapshot ones."""
+
+    @pytest.mark.asyncio
+    async def test_clip_notifies_clip_listeners_not_snapshot_listeners(self, tmp_path):
+        provider = FakeProvider()
+        hub = make_hub(
+            tmp_path,
+            options={
+                CONF_SNAPSHOT_MODE: "clip",
+                CONF_SNAPSHOT_PATH: str(tmp_path / "www" / "doorbell"),
+            },
+            provider=provider,
+        )
+        snapshot_pokes: list = []
+        clip_pokes: list = []
+        hub.on_snapshot_change(snapshot_pokes.append)
+        hub.on_clip_change(clip_pokes.append)
+
+        await hub.async_capture_test_snapshot()
+
+        assert snapshot_pokes == []                    # image entity untouched
+        assert clip_pokes == [hub.last_clip_url]        # clip listeners refreshed

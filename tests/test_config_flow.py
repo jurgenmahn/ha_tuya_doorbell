@@ -1016,6 +1016,22 @@ class TestSnapshotModeSplit:
             config_flow.snapshot_fields_for(mode)
 
     @pytest.mark.asyncio
+    async def test_clip_screen_does_not_render_look_back(self):
+        """The field list excludes it, but the schema builder used to bolt the
+        look-back delay onto every mode that had a buffer -- clip included."""
+        flow = _options_flow({}, hub=_FakeHub(_OptionsProfile({7: "Button"})))
+        result = await flow.async_step_snapshot_settings({"snapshot_mode": "clip"})
+        assert result["step_id"] == "snapshot_options"
+        assert "snapshot_delay_ms" not in _fields(result)
+        assert "snapshot_buffer_seconds" in _fields(result)
+
+    @pytest.mark.asyncio
+    async def test_buffer_screen_still_renders_look_back(self):
+        flow = _options_flow({}, hub=_FakeHub(_OptionsProfile({7: "Button"})))
+        result = await flow.async_step_snapshot_settings({"snapshot_mode": "buffer"})
+        assert "snapshot_delay_ms" in _fields(result)
+
+    @pytest.mark.asyncio
     async def test_the_mode_is_preselected_from_what_is_stored(self):
         flow = _options_flow({"snapshot_mode": "buffer"})
         result = await flow.async_step_snapshot_settings()
