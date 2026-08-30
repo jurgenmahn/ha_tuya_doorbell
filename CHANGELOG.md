@@ -5,6 +5,19 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.2.0] - 2026-08-30
+
+### Added
+
+- A realtime debug event stream. With "Debug: realtime datapoint events" turned
+  on in the options, every datapoint the device reports is fired on the event bus
+  as `lsc_tuya_doorbell_debug_dp` the instant it arrives, carrying the datapoint
+  number, its value, the previous value, and a monotonic timestamp taken at
+  arrival. Subscribing to it under Developer Tools → Events is how you measure the
+  delay between a button press and anything reacting to it -- the options screen
+  that refreshes on a timer never showed timing this precisely. Off by default;
+  it is chatty and only meant for debugging.
+
 ## [3.1.0] - 2026-08-29
 
 ### Added

@@ -20,6 +20,12 @@ RECONNECT_RETRY_INTERVAL = 5  # seconds between known-IP retries
 # Event reset timeout
 DEFAULT_EVENT_RESET_TIMEOUT = 5  # seconds
 
+# Debug event stream (off by default). When on, every datapoint the device
+# reports is mirrored to the bus as it arrives, with a monotonic timestamp,
+# so the exact timing of a doorbell press can be watched live in
+# Developer Tools -> Events. See EVENT_DEBUG_DP.
+DEFAULT_DEBUG_EVENTS = False
+
 # DP discovery
 DP_SCAN_START = 1
 DP_SCAN_END = 255
@@ -45,6 +51,7 @@ CONF_PROTOCOL_VERSION = "protocol_version"
 CONF_DEVICE_NAME = "device_name"
 CONF_DP_OVERRIDES = "dp_overrides"
 CONF_EVENT_RESET_TIMEOUT = "event_reset_timeout"
+CONF_DEBUG_EVENTS = "debug_events"
 CONF_ONVIF_USERNAME = "onvif_username"
 CONF_ONVIF_PASSWORD = "onvif_password"
 CONF_RTSP_PORT = "rtsp_port"
@@ -191,6 +198,12 @@ EVENT_DP_SCAN_RESULTS = f"{DOMAIN}_dp_scan_results"
 # Without it such a datapoint would only ever move an entity and stay invisible
 # to automations.
 EVENT_DP_EVENT = f"{DOMAIN}_dp_event"
+
+# A realtime mirror of every datapoint update, fired only while the debug
+# switch is on. Unlike the events above it carries no meaning about roles;
+# it exists purely to time what the device sends. Payload: dp, value, raw,
+# old_value, monotonic (time.monotonic() at arrival), plus device_id.
+EVENT_DEBUG_DP = f"{DOMAIN}_debug_dp"
 
 # Every device event is fired twice: once under the stable name above, and once
 # under "<name>_<device slug>". The slug comes from the editable device name, so

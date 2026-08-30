@@ -22,6 +22,7 @@ import pytest
 from custom_components.lsc_tuya_doorbell import hub as hub_module
 from custom_components.lsc_tuya_doorbell.const import (
     CONF_DEVICE_ID,
+    CONF_DEBUG_EVENTS,
     CONF_FORCE_RECORD_ON,
     CONF_HOST,
     CONF_LOCAL_KEY,
@@ -37,6 +38,7 @@ from custom_components.lsc_tuya_doorbell.const import (
     ENTITY_BINARY_SENSOR,
     ENTITY_SWITCH,
     EVENT_BUTTON_PRESS,
+    EVENT_DEBUG_DP,
     EVENT_DP_EVENT,
     EVENT_IP_CHANGED,
     EVENT_MOTION_DETECT,
@@ -1332,3 +1334,76 @@ class TestRecordingCanReadFromElsewhere:
     async def test_whitespace_is_not_a_source(self, tmp_path):
         hub = make_hub(tmp_path, options={"snapshot_source_url": "   "})
         assert hub._snapshot_source_url() == hub.stream_url
+
+
+class TestDebugEventStream:
+    """The realtime datapoint mirror used to debug doorbell timing.
+
+    It exists to answer one question -- when did each datapoint actually arrive --
+    so it must fire for every datapoint, including ones that carry no role and no
+    event, and it must stay silent unless explicitly switched on.
+    """
+
+    @pytest.mark.asyncio
+    async def test_off_by_default_nothing_is_mirrored(self, tmp_path):
+        hub = make_hub(tmp_path, profile=doorbell_profile(doorbell_button=DOORBELL_DP))
+        hub._handle_status_update({str(DOORBELL_DP): "x", str(RECORD_DP): True})
+        assert EVENT_DEBUG_DP not in hub._hass.bus.names()
+
+    @pytest.mark.asyncio
+    async def test_on_mirrors_every_datapoint_even_a_plain_setting(self, tmp_path):
+        hub = make_hub(
+            tmp_path,
+            options={CONF_DEBUG_EVENTS: True},
+            profile=doorbell_profile(doorbell_button=DOORBELL_DP),
+        )
+        hub._handle_status_update({str(DOORBELL_DP): "x", str(RECORD_DP): True})
+
+        mirrored = [d["dp"] for name, d in hub._hass.bus.events if name == EVENT_DEBUG_DP]
+        # The button (an event) and the record switch (a plain setting) both.
+        assert DOORBELL_DP in mirrored
+        assert RECORD_DP in mirrored
+
+    @pytest.mark.asyncio
+    async def test_the_payload_carries_what_timing_debug_needs(self, tmp_path):
+        hub = make_hub(
+            tmp_path,
+            options={CONF_DEBUG_EVENTS: True},
+            profile=doorbell_profile(doorbell_button=DOORBELL_DP),
+        )
+        hub._handle_status_update({str(DOORBELL_DP): "press"})
+
+        payload = hub._hass.bus.payload(EVENT_DEBUG_DP)
+        assert payload["dp"] == DOORBELL_DP
+        assert payload["value"] == "press"
+        assert payload["device_id"] == "dev123"
+        assert payload["role"] == ROLE_DOORBELL_BUTTON
+        assert isinstance(payload["monotonic"], float)
+
+    def test_it_reports_the_previous_value(self, tmp_path):
+        hub = make_hub(
+            tmp_path,
+            options={CONF_DEBUG_EVENTS: True},
+            profile=doorbell_profile(doorbell_button=DOORBELL_DP),
+        )
+        hub._handle_status_update({str(RECORD_DP): True})
+        hub._hass.bus.events.clear()
+        hub._handle_status_update({str(RECORD_DP): False})
+
+        payload = hub._hass.bus.payload(EVENT_DEBUG_DP)
+        assert payload["old_value"] is True
+        assert payload["value"] is False
+
+    @pytest.mark.asyncio
+    async def test_bytes_raw_is_decoded_so_it_survives_the_websocket(self, tmp_path):
+        """The encrypted-string datapoints arrive as bytes; JSON cannot carry
+        those, so the mirror must hand over something serialisable."""
+        hub = make_hub(
+            tmp_path,
+            options={CONF_DEBUG_EVENTS: True},
+            profile=doorbell_profile(doorbell_button=DOORBELL_DP),
+        )
+        hub._handle_status_update({str(DOORBELL_DP): b"\x01\x02rawbytes"})
+
+        payload = hub._hass.bus.payload(EVENT_DEBUG_DP)
+        assert isinstance(payload["raw"], str)

@@ -88,7 +88,7 @@
     "step": {
       "init": {
         "title": "LSC Tuya Doorbell Options",
-        "description": "Choose what you want to configure. Each screen saves when you submit it and brings you back here, so you can do several things in a row; use 'Close' when you are done.",
+        "description": "Choose what you want to configure. Each screen saves when you submit it and brings you back here, so you can do several things in a row; use 'Close' when you are done.\n\nDebugging timing? Turn on 'Debug: realtime datapoint events' below. While it is on, every datapoint the doorbell reports is mirrored to the event bus as `lsc_tuya_doorbell_debug_dp` the moment it arrives, with a monotonic timestamp -- watch it live under Developer Tools → Events to see exactly when a button press lands.",
         "menu_options": {
           "connection": "Connection settings",
           "camera_settings": "Camera settings",
@@ -99,6 +99,7 @@
           "capture_review": "Review capture results",
           "assign_roles": "Assign roles to datapoints",
           "firmware_generation": "Datapoint names (firmware generation)",
+          "debug_settings": "Debug: realtime datapoint events",
           "finish": "Close"
         },
         "menu_option_descriptions": {
@@ -111,6 +112,7 @@
           "capture_review": "Pick datapoints out of the last live capture.",
           "assign_roles": "Say which datapoint is the button, the motion sensor and the record switch.",
           "firmware_generation": "Which datapoint-name table applies to this device.",
+          "debug_settings": "Mirror every datapoint to the event bus as it arrives, for live timing in Developer Tools → Events. Off by default.",
           "finish": "Close this dialog. Everything you submitted is already saved."
         }
       },
@@ -284,6 +286,14 @@
           "snapshot_delay_ms": "The doorbell reports a press seconds after it happened, so a picture of 'now' shows the visitor already walking away. This takes the picture that many milliseconds earlier. Start around 3000 ms and adjust.",
           "still_image_url_override": "Where to fetch a single picture, if something on your network can hand one over — go2rtc's /api/frame.jpeg, Frigate's latest.jpg, or a camera that serves stills over HTTP. When this is set it is always tried first, in every mode, because it costs one request. Leave it empty to take pictures from the video stream instead.",
           "snapshot_source_url": "Leave empty to record from whatever the camera streams from. Set it when the two should differ — if something on your network already restreams this doorbell for other reasons, point this at that instead of standing up a second one. It also works the other way round: record straight from the doorbell while the camera goes through a restreamer."
+        }
+      },
+      "debug_settings": {
+        "title": "Debug: realtime datapoint events",
+        "description": "When on, every datapoint the doorbell reports is fired on the Home Assistant event bus as `{debug_event}` the instant it arrives, carrying the datapoint number, its value, the previous value, and a monotonic timestamp taken at arrival.\n\nSubscribe to `{debug_event}` under Developer Tools → Events to watch the doorbell in real time -- this is how you measure the delay between a button press and anything reacting to it. It is chatty, so leave it off for normal use.",
+        "data": {
+          "debug_events": "Fire a realtime event for every datapoint",
+          "back": "Back to the options menu (nothing on this screen is saved)"
         }
       }
     },

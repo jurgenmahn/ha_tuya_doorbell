@@ -32,6 +32,7 @@ from .const import (
     infer_firmware_generation,
     CONF_DEVICE_ID,
     CONF_DEVICE_NAME,
+    CONF_DEBUG_EVENTS,
     CONF_FORCE_RECORD_ON,
     CONF_HOST,
     CONF_LOCAL_KEY,
@@ -50,11 +51,13 @@ from .const import (
     CONF_SNAPSHOT_TRIGGER_DPS,
     CONF_STILL_IMAGE_URL_OVERRIDE,
     CONF_STREAM_URL_OVERRIDE,
+    DEFAULT_DEBUG_EVENTS,
     DEFAULT_ONVIF_USERNAME,
     DEFAULT_PORT,
     DEFAULT_RTSP_PATH,
     DEFAULT_RTSP_PORT,
     DEFAULT_SNAPSHOT_PATH,
+    EVENT_DEBUG_DP,
     DEVICE_TYPE_LABELS,
     DISCOVERY_SCAN_TIMEOUT,
     DOMAIN,
@@ -123,6 +126,7 @@ MENU_CAPTURE = "live_capture"
 MENU_CAPTURE_REVIEW = "capture_review"
 MENU_ROLES = "assign_roles"
 MENU_FIRMWARE = "firmware_generation"
+MENU_DEBUG = "debug_settings"
 MENU_FINISH = "finish"
 
 # Menu option ids double as step ids: Home Assistant dispatches a chosen menu
@@ -137,6 +141,7 @@ MENU_OPTIONS: tuple[str, ...] = (
     MENU_CAPTURE_REVIEW,
     MENU_ROLES,
     MENU_FIRMWARE,
+    MENU_DEBUG,
     MENU_FINISH,
 )
 
@@ -1119,6 +1124,47 @@ class LscTuyaDoorbellOptionsFlow(OptionsFlow):
                     }
                 )
             ),
+        )
+
+    # --- Debug ---
+
+    async def async_step_debug_settings(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Turn the realtime datapoint debug stream on or off.
+
+        When on, every datapoint the device reports is mirrored to the event bus
+        as ``lsc_tuya_doorbell_debug_dp`` the moment it arrives, so the timing of
+        a doorbell press can be watched live in Developer Tools -> Events. Off by
+        default; it is chatty and only useful while debugging.
+        """
+        if going_back(user_input):
+            return await self.async_step_init()
+
+        opts = self._config_entry.options
+
+        if user_input is not None:
+            new_options = dict(opts)
+            new_options[CONF_DEBUG_EVENTS] = user_input.get(
+                CONF_DEBUG_EVENTS, DEFAULT_DEBUG_EVENTS
+            )
+            return await self._async_save_options(new_options)
+
+        return self.async_show_form(
+            step_id="debug_settings",
+            data_schema=vol.Schema(
+                _with_back(
+                    {
+                        vol.Optional(
+                            CONF_DEBUG_EVENTS,
+                            default=opts.get(
+                                CONF_DEBUG_EVENTS, DEFAULT_DEBUG_EVENTS
+                            ),
+                        ): bool,
+                    }
+                )
+            ),
+            description_placeholders={"debug_event": EVENT_DEBUG_DP},
         )
 
     # --- Camera ---

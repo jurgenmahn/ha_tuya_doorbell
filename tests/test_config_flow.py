@@ -1124,6 +1124,7 @@ class TestNavigation:
             "dp_scan_mode",
             "assign_roles",
             "capture_review",
+            "debug_settings",
         ],
     )
     @pytest.mark.asyncio
@@ -1143,6 +1144,7 @@ class TestNavigation:
             "snapshot_settings",
             "dp_scan_mode",
             "firmware_generation",
+            "debug_settings",
         ],
     )
     @pytest.mark.asyncio
@@ -1204,6 +1206,22 @@ class TestNavigation:
         assert result["type"] == "menu"
         assert flow.hass.config_entries.option_writes == [{"snapshot_mode": "warm"}]
         assert flow._config_entry.options == {"snapshot_mode": "warm"}
+
+    @pytest.mark.asyncio
+    async def test_debug_switch_saves_the_option_and_returns_to_the_menu(self):
+        flow = _options_flow({}, hub=_FakeHub(_OptionsProfile({})))
+        result = await flow.async_step_debug_settings({"debug_events": True})
+
+        assert result["type"] == "menu"
+        assert flow.hass.config_entries.option_writes == [{"debug_events": True}]
+        assert flow._config_entry.options == {"debug_events": True}
+
+    @pytest.mark.asyncio
+    async def test_debug_switch_defaults_to_off(self):
+        flow = _options_flow({}, hub=_FakeHub(_OptionsProfile({})))
+        result = await flow.async_step_debug_settings()
+
+        assert result["data_schema"].defaults()["debug_events"] is False
 
 
 # --------------------------------------------------------------------------

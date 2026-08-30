@@ -77,10 +77,13 @@ from .const import (
     DP_TYPE_INT,
     DP_TYPE_RAW,
     DP_TYPE_STRING,
+    CONF_DEBUG_EVENTS,
+    DEFAULT_DEBUG_EVENTS,
     EVENT_BUTTON_PRESS,
     EVENT_CONNECTED,
     EVENT_DISCONNECTED,
     EVENT_DP_DISCOVERED,
+    EVENT_DEBUG_DP,
     EVENT_DP_EVENT,
     EVENT_IP_CHANGED,
     EVENT_MOTION_DETECT,
@@ -1287,7 +1290,11 @@ class DeviceHub:
     def _handle_status_update(self, dps: dict) -> None:
         """Process incoming DPS updates from the device."""
         _LOGGER.debug("StatusUpdate: received DPS=%s", dps)
+        debug_events = self._option(CONF_DEBUG_EVENTS, DEFAULT_DEBUG_EVENTS)
         for dp_str, raw_value in dps.items():
+            # Stamped at arrival so the debug stream times what the device sent,
+            # not when this handler happened to get round to firing the event.
+            arrival = time.monotonic()
             try:
                 dp_id = int(dp_str)
             except (TypeError, ValueError):
@@ -1312,6 +1319,20 @@ class DeviceHub:
             event_type = self._event_type_for(role, definition)
             if event_type:
                 self._handle_event(dp_id, value, event_type, role, definition)
+
+            if debug_events:
+                self._fire_event(EVENT_DEBUG_DP, {
+                    "dp": dp_id,
+                    "value": value,
+                    # bytes are not JSON-serialisable and would never reach the
+                    # websocket; the encrypted-string datapoints arrive as bytes.
+                    "raw": raw_value.decode("utf-8", "replace")
+                    if isinstance(raw_value, bytes) else raw_value,
+                    "old_value": old_value,
+                    "role": role,
+                    "event_type": event_type,
+                    "monotonic": arrival,
+                })
 
             if (
                 role == ROLE_RECORD_SWITCH
