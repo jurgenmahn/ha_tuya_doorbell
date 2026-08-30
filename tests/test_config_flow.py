@@ -1187,7 +1187,7 @@ class TestNavigation:
 
         result = await flow.async_step_assign_roles(
             {"doorbell_button": "185", "motion": config_flow.ROLE_NONE,
-             "record_switch": config_flow.ROLE_NONE}
+             "onvif": config_flow.ROLE_NONE}
         )
 
         assert result["type"] == "menu"
@@ -1378,12 +1378,12 @@ class TestSplitTranslations:
         assert "15.94" in strings["options"]["step"]["camera_settings"]["description"]
         assert "5.86" in strings["options"]["step"]["snapshot_settings"]["description"]
 
-    def test_force_record_on_says_what_it_depends_on(self, strings):
+    def test_force_onvif_says_what_it_depends_on(self, strings):
         text = strings["options"]["step"]["camera_settings"]["data_description"][
-            "force_record_on"
+            "force_onvif"
         ]
-        assert "record switch" in text
-        assert "{record_role}" in text
+        assert "ONVIF switch" in text
+        assert "{onvif_role}" in text
 
     def test_every_step_with_a_back_field_names_it(self, strings):
         steps = strings["options"]["step"]

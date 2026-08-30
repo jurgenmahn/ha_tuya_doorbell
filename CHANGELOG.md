@@ -5,6 +5,22 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.4.0] - 2026-08-30
+
+### Changed
+
+- The **record switch** role and the **"auto-enable the record switch"** option are
+  renamed to **ONVIF**: the role is now `onvif` and the option is `force_onvif`.
+  The switch was never about recording -- it enables ONVIF, and with it the RTSP
+  stream, which some devices turn off by themselves (for instance after a reboot).
+  The old "record" naming sat confusingly next to the genuine recording datapoints
+  (video recording, recording mode). Behaviour is unchanged: the switch is still
+  pushed back on when the device drops it.
+- Existing configurations are migrated automatically. A profile that stored the
+  role as `record_switch` loads it as `onvif`, and an entry that stored the option
+  as `force_record_on` is still honoured, so upgrading does not silently stop ONVIF
+  being kept on.
+
 ## [3.3.0] - 2026-08-30
 
 ### Added

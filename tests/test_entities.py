@@ -24,7 +24,7 @@ from custom_components.lsc_tuya_doorbell.const import (
     ENTITY_SWITCH,
     ROLE_DOORBELL_BUTTON,
     ROLE_MOTION,
-    ROLE_RECORD_SWITCH,
+    ROLE_ONVIF,
     SD_STATUS_MAP,
 )
 from custom_components.lsc_tuya_doorbell.dp_registry import (
@@ -94,7 +94,7 @@ class TestDeviceClass:
 
     def test_role_without_a_mapping_gets_nothing(self):
         assert (
-            device_class_for(make_dp(), ROLE_RECORD_SWITCH, ROLE_BINARY_DEVICE_CLASS)
+            device_class_for(make_dp(), ROLE_ONVIF, ROLE_BINARY_DEVICE_CLASS)
             is None
         )
 
@@ -135,7 +135,7 @@ class TestEventType:
 
     def test_unknown_role_still_fires_something(self):
         assert event_type_for(None) == DEFAULT_EVENT_TYPE
-        assert event_type_for(ROLE_RECORD_SWITCH) == DEFAULT_EVENT_TYPE
+        assert event_type_for(ROLE_ONVIF) == DEFAULT_EVENT_TYPE
 
 
 class TestValueMap:
@@ -381,7 +381,7 @@ def test_an_event_role_produces_an_event_entity_even_without_the_flag() -> None:
 
 
 def test_a_role_that_is_not_an_event_produces_no_event_entity() -> None:
-    from custom_components.lsc_tuya_doorbell.const import ROLE_RECORD_SWITCH
+    from custom_components.lsc_tuya_doorbell.const import ROLE_ONVIF
     from custom_components.lsc_tuya_doorbell.dp_registry import (
         DeviceProfile,
         DPDefinition,
@@ -392,6 +392,6 @@ def test_a_role_that_is_not_an_event_produces_no_event_entity() -> None:
     profile.discovered_dps[101] = DPDefinition(
         dp_id=101, name="Record Switch", dp_type="bool", entity_type="switch",
     )
-    profile.set_role(ROLE_RECORD_SWITCH, 101)
+    profile.set_role(ROLE_ONVIF, 101)
 
     assert event_definitions(profile) == []

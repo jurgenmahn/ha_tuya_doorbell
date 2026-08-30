@@ -24,6 +24,8 @@ from .const import (
     ENTITY_SWITCH,
     KNOWN_DPS,
     ROLES,
+    ROLE_ONVIF,
+    LEGACY_ONVIF_ROLE,
     verified_dps_for,
 )
 from .dp_discovery import DiscoveredDP
@@ -152,6 +154,11 @@ def _definition_from_dict(data: dict[str, Any]) -> DPDefinition:
     return DPDefinition(**clean)
 
 
+def _migrate_role(role: str) -> str:
+    """Rename a role stored under a former name to its current one."""
+    return ROLE_ONVIF if role == LEGACY_ONVIF_ROLE else role
+
+
 def _profile_from_dict(data: dict[str, Any]) -> DeviceProfile:
     """Rebuild a DeviceProfile from stored JSON, roles included."""
     profile = DeviceProfile(
@@ -159,10 +166,12 @@ def _profile_from_dict(data: dict[str, Any]) -> DeviceProfile:
         firmware_version=data.get("firmware_version"),
         discovery_timestamp=data.get("discovery_timestamp", ""),
         protocol_version=data.get("protocol_version", "3.3"),
+        # Migrate the pre-3.4.0 role name: what was stored as "record_switch"
+        # is the ONVIF switch, now called ROLE_ONVIF.
         roles={
-            role: int(dp_id)
+            _migrate_role(role): int(dp_id)
             for role, dp_id in (data.get("roles") or {}).items()
-            if role in ROLES
+            if _migrate_role(role) in ROLES
         },
     )
     for dp_str, dp_data in data.get("dps", {}).items():

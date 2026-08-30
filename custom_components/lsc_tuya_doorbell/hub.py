@@ -42,7 +42,8 @@ from .const import (
     infer_firmware_generation,
     CONF_DEVICE_ID,
     CONF_DEVICE_NAME,
-    CONF_FORCE_RECORD_ON,
+    CONF_FORCE_ONVIF,
+    LEGACY_FORCE_RECORD_OPTION,
     CONF_HOST,
     CONF_LOCAL_KEY,
     CONF_ONVIF_PASSWORD,
@@ -100,10 +101,10 @@ from .const import (
     RECONNECT_INITIAL_WAIT,
     RECONNECT_RETRY_COUNT,
     RECONNECT_RETRY_INTERVAL,
-    RECORD_RECOVERY_DELAY,
+    ONVIF_RECOVERY_DELAY,
     ROLE_DOORBELL_BUTTON,
     ROLE_MOTION,
-    ROLE_RECORD_SWITCH,
+    ROLE_ONVIF,
     STILL_IMAGE_TIMEOUT,
     WWW_DIRECTORY,
     mask_credential,
@@ -373,7 +374,7 @@ class DeviceHub:
         self._heartbeat_task: asyncio.Task | None = None
         self._reconnect_task: asyncio.Task | None = None
         self._background_tasks: set[asyncio.Task] = set()
-        self._record_recovery_handle: Callable[[], None] | None = None
+        self._onvif_recovery_handle: Callable[[], None] | None = None
         self._unregister_disconnect: Callable | None = None
         self._unregister_status: Callable | None = None
 
@@ -845,9 +846,9 @@ class DeviceHub:
 
     async def async_teardown(self) -> None:
         """Tear down the hub: disconnect, stop all tasks, drop all listeners."""
-        if self._record_recovery_handle is not None:
-            self._record_recovery_handle()
-            self._record_recovery_handle = None
+        if self._onvif_recovery_handle is not None:
+            self._onvif_recovery_handle()
+            self._onvif_recovery_handle = None
 
         tasks = [
             self._heartbeat_task,
@@ -1334,12 +1335,8 @@ class DeviceHub:
                     "monotonic": arrival,
                 })
 
-            if (
-                role == ROLE_RECORD_SWITCH
-                and value is False
-                and self._option(CONF_FORCE_RECORD_ON, False)
-            ):
-                self._schedule_record_recovery(dp_id)
+            if role == ROLE_ONVIF and value is False and self._force_onvif():
+                self._schedule_onvif_recovery(dp_id)
 
     @staticmethod
     def _event_type_for(role: str | None, definition: DPDefinition | None) -> str | None:
@@ -1522,22 +1519,37 @@ class DeviceHub:
         return True
 
 
-    def _schedule_record_recovery(self, dp_id: int) -> None:
-        """Push the record switch back on after the device turned it off."""
+    def _force_onvif(self) -> bool:
+        """Whether the ONVIF switch should be pushed back on when the device drops it.
+
+        Reads the current option name, falling back to the name it had before
+        3.4.0 so an entry saved by an older version keeps working after upgrade.
+        """
+        current = self._option(CONF_FORCE_ONVIF, None)
+        if current is not None:
+            return bool(current)
+        return bool(self._option(LEGACY_FORCE_RECORD_OPTION, False))
+
+    def _schedule_onvif_recovery(self, dp_id: int) -> None:
+        """Push the ONVIF switch back on after the device turned it off.
+
+        The device dropping ONVIF also drops the RTSP stream, so this is what
+        keeps the camera reachable after a device reboot turns it off.
+        """
         _LOGGER.warning(
-            "Record switch (DP %d) turned off by the device — scheduling "
-            "auto-recovery in %ds", dp_id, RECORD_RECOVERY_DELAY,
+            "ONVIF switch (DP %d) turned off by the device — scheduling "
+            "auto-recovery in %ds", dp_id, ONVIF_RECOVERY_DELAY,
         )
-        if self._record_recovery_handle is not None:
-            self._record_recovery_handle()
-            self._record_recovery_handle = None
+        if self._onvif_recovery_handle is not None:
+            self._onvif_recovery_handle()
+            self._onvif_recovery_handle = None
 
         def _recover(_now: Any = None) -> None:
-            self._record_recovery_handle = None
-            self._spawn(self.set_dp(dp_id, True), f"record_recovery_{dp_id}", track=True)
+            self._onvif_recovery_handle = None
+            self._spawn(self.set_dp(dp_id, True), f"onvif_recovery_{dp_id}", track=True)
 
-        self._record_recovery_handle = self._call_later(
-            RECORD_RECOVERY_DELAY, _recover
+        self._onvif_recovery_handle = self._call_later(
+            ONVIF_RECOVERY_DELAY, _recover
         )
 
     # --- Connection lifecycle ---

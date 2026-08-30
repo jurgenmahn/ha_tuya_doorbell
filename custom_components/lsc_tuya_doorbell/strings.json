@@ -164,13 +164,13 @@
         "data": {
           "video_source": "Where does the video come from?",
           "snapshot_path": "Snapshot save directory",
-          "force_record_on": "Auto-enable the record switch",
+          "force_onvif": "Force ONVIF on",
           "back": "Back to the options menu (nothing on this screen is saved)"
         },
         "data_description": {
           "video_source": "Pre-selected from what is already configured: a stream URL override means a restreamer is in front of the camera.",
           "snapshot_path": "Where taken pictures are written. Home Assistant serves the www folder of your configuration as /local, so the default ends up at /local/doorbell/... and that URL is what the events carry. Only the ten most recent files per device are kept.",
-          "force_record_on": "Some Tuya devices randomly turn recording — and with it ONVIF — off. This forces it back on. It only does anything when a datapoint holds the 'record switch' role, which you set under 'Assign roles to datapoints'. Right now {record_role}."
+          "force_onvif": "Some Tuya devices turn ONVIF — and with it the RTSP stream — off by themselves, for instance after a reboot. This pushes it back on. It only does anything when a datapoint holds the 'ONVIF switch' role, which you set under 'Assign roles to datapoints'. Right now {onvif_role}."
         }
       },
       "snapshot_settings": {
@@ -228,11 +228,11 @@
       },
       "assign_roles": {
         "title": "Assign Roles",
-        "description": "A datapoint without a role is just a sensor: the integration reads roles, not numbers, so this is where the doorbell button becomes the doorbell button.\n\nOnly the doorbell button really matters. Motion is optional, and the record switch is only needed if you use 'force recording on' — it is the switch that gets turned back on when the device turns it off by itself.\n\nDatapoints marked 'already configured' were found earlier; leaving a role pointed at one keeps it as it was.",
+        "description": "A datapoint without a role is just a sensor: the integration reads roles, not numbers, so this is where the doorbell button becomes the doorbell button.\n\nOnly the doorbell button really matters. Motion is optional, and the ONVIF switch is only needed if you use 'Force ONVIF on' — it is the switch that gets turned back on when the device turns it off by itself, which also brings the RTSP stream back.\n\nDatapoints marked 'already configured' were found earlier; leaving a role pointed at one keeps it as it was.",
         "data": {
           "doorbell_button": "Doorbell button",
           "motion": "Motion detection",
-          "record_switch": "Recording switch",
+          "onvif": "ONVIF switch",
           "back": "Back to the options menu (nothing on this screen is saved)"
         }
       },

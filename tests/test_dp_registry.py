@@ -19,7 +19,7 @@ from custom_components.lsc_tuya_doorbell.const import (
     KNOWN_DPS_V5,
     ROLE_DOORBELL_BUTTON,
     ROLE_MOTION,
-    ROLE_RECORD_SWITCH,
+    ROLE_ONVIF,
     known_dps_for,
 )
 from custom_components.lsc_tuya_doorbell.dp_registry import (
@@ -100,7 +100,7 @@ def test_seeding_only_claims_datapoints_the_device_actually_has() -> None:
     assert filled == [ROLE_DOORBELL_BUTTON]
     assert profile.role_dp(ROLE_DOORBELL_BUTTON) == 185
     assert profile.role_dp(ROLE_MOTION) is None
-    assert profile.role_dp(ROLE_RECORD_SWITCH) is None
+    assert profile.role_dp(ROLE_ONVIF) is None
 
 
 def test_seeding_leaves_a_claimed_role_alone() -> None:
@@ -288,17 +288,42 @@ def test_the_record_switch_role_is_never_seeded() -> None:
     from custom_components.lsc_tuya_doorbell.const import (
         DEFAULT_ROLE_DPS,
         ROLE_DOORBELL_BUTTON,
-        ROLE_RECORD_SWITCH,
+        ROLE_ONVIF,
     )
 
-    assert ROLE_RECORD_SWITCH not in DEFAULT_ROLE_DPS
+    assert ROLE_ONVIF not in DEFAULT_ROLE_DPS
     assert ROLE_DOORBELL_BUTTON in DEFAULT_ROLE_DPS
 
 
 def test_a_legacy_profile_gets_no_record_switch_even_though_101_is_present() -> None:
-    from custom_components.lsc_tuya_doorbell.const import ROLE_RECORD_SWITCH
+    from custom_components.lsc_tuya_doorbell.const import ROLE_ONVIF
 
     profile = _profile_with(101, 185)
     profile.seed_roles()
 
-    assert profile.role_dp(ROLE_RECORD_SWITCH) is None
+    assert profile.role_dp(ROLE_ONVIF) is None
+
+
+def test_a_pre_3_4_0_record_switch_role_loads_as_onvif() -> None:
+    """The role was renamed; a profile stored under the old name must not lose it.
+
+    'record_switch' pointed at the ONVIF switch all along, so it migrates to the
+    ROLE_ONVIF name rather than being dropped as an unknown role.
+    """
+    stored = {
+        "device_id": "dev1",
+        "protocol_version": "3.3",
+        "roles": {"record_switch": 255, "doorbell_button": 185},
+        "dps": {
+            "255": {"dp_id": 255, "name": "ONVIF", "dp_type": "bool",
+                    "entity_type": "switch"},
+            "185": {"dp_id": 185, "name": "Doorbell Button", "dp_type": "raw",
+                    "entity_type": "binary_sensor"},
+        },
+    }
+
+    profile = _profile_from_dict(stored)
+
+    assert profile.role_dp(ROLE_ONVIF) == 255
+    assert profile.role_of(255) == ROLE_ONVIF
+    assert "record_switch" not in profile.roles

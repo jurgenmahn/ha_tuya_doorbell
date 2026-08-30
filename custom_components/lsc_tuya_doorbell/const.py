@@ -71,7 +71,10 @@ CONF_STREAM_URL_OVERRIDE = "stream_url_override"
 # still. Leave empty to keep grabbing frames from the stream.
 CONF_STILL_IMAGE_URL_OVERRIDE = "still_image_url_override"
 CONF_SNAPSHOT_PATH = "snapshot_path"
-CONF_FORCE_RECORD_ON = "force_record_on"
+CONF_FORCE_ONVIF = "force_onvif"
+# Older config entries stored this option under its former name. Read at
+# runtime as a fallback so upgrading does not silently disable ONVIF forcing.
+LEGACY_FORCE_RECORD_OPTION = "force_record_on"
 CONF_SNAPSHOT_TRIGGER_DPS = "snapshot_trigger_dps"
 
 DEFAULT_ONVIF_USERNAME = "admin"
@@ -91,9 +94,9 @@ DEFAULT_WWW_ROOT = "/config/www"
 # fails fast rather than hanging the snapshot task.
 STILL_IMAGE_TIMEOUT = 10  # seconds
 
-# How long to wait before pushing the record switch back on after the device
-# turned it off by itself.
-RECORD_RECOVERY_DELAY = 2  # seconds
+# How long to wait before pushing the ONVIF switch back on after the device
+# turned it off by itself (which also drops the RTSP stream).
+ONVIF_RECOVERY_DELAY = 2  # seconds
 
 # DP types
 DP_TYPE_BOOL = "bool"
@@ -145,19 +148,24 @@ DP_MOTION_DETECTION = 115
 # what broke this in the first place.
 ROLE_DOORBELL_BUTTON = "doorbell_button"
 ROLE_MOTION = "motion"
-ROLE_RECORD_SWITCH = "record_switch"
+# The switch that enables ONVIF (and with it the RTSP stream). Some devices
+# turn it off by themselves; "force ONVIF" pushes it back on. Formerly, and
+# misleadingly, called the "record switch".
+ROLE_ONVIF = "onvif"
+# Its former role name, migrated to ROLE_ONVIF when an old profile loads.
+LEGACY_ONVIF_ROLE = "record_switch"
 
-ROLES: tuple[str, ...] = (ROLE_DOORBELL_BUTTON, ROLE_MOTION, ROLE_RECORD_SWITCH)
+ROLES: tuple[str, ...] = (ROLE_DOORBELL_BUTTON, ROLE_MOTION, ROLE_ONVIF)
 
 # Used to propose roles after a scan, and to give profiles written before roles
 # existed something sensible on first load. Nothing reads this at runtime.
 DEFAULT_ROLE_DPS: dict[str, int] = {
     ROLE_DOORBELL_BUTTON: DP_DOORBELL_BUTTON,
     ROLE_MOTION: DP_MOTION_DETECTION,
-    # ROLE_RECORD_SWITCH deliberately absent. DP 101 was assumed to be the
-    # record switch and is verified to be the indicator light, so seeding it
-    # would point "force recording on" at an LED and toggle it forever. A role
-    # nobody assigned is off; a role pointed at the wrong datapoint acts.
+    # ROLE_ONVIF deliberately absent. DP 101 was assumed to be the ONVIF/record
+    # switch and is verified to be the indicator light, so seeding it would point
+    # "force ONVIF" at an LED and toggle it forever. A role nobody assigned is
+    # off; a role pointed at the wrong datapoint acts.
 }
 
 # Snapshot configuration.
@@ -243,7 +251,7 @@ SD_STATUS_MAP = {
 # Known DP definitions: {dp_id: (name, dp_type, entity_type, options)}
 # Firmware v4 mappings
 KNOWN_DPS_V4: dict[int, dict] = {
-    # Verified on hardware 2026-08-27: the indicator light. Not the record
+    # Verified on hardware 2026-08-27: the indicator light. Not the ONVIF/record
     # switch, which is what made this number dangerous -- see DEFAULT_ROLE_DPS.
     101: {"verified": True, "name": "Indicator Light", "dp_type": DP_TYPE_BOOL, "entity_type": ENTITY_SWITCH},
     # Verified on hardware 2026-08-27: flips the image. The table did know about

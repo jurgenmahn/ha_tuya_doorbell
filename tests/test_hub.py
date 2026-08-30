@@ -26,7 +26,7 @@ from custom_components.lsc_tuya_doorbell.const import (
     CONF_DEBUG_EVENTS,
     CONF_SNAPSHOT_MODE,
     CONF_STILL_IMAGE_URL_OVERRIDE,
-    CONF_FORCE_RECORD_ON,
+    CONF_FORCE_ONVIF,
     CONF_HOST,
     CONF_LOCAL_KEY,
     CONF_ONVIF_PASSWORD,
@@ -740,8 +740,8 @@ class TestRecordRecovery:
     async def test_recovery_follows_the_role(self, tmp_path):
         hub = make_hub(
             tmp_path,
-            options={CONF_FORCE_RECORD_ON: True},
-            profile=doorbell_profile(record_switch=RECORD_DP),
+            options={CONF_FORCE_ONVIF: True},
+            profile=doorbell_profile(onvif=RECORD_DP),
         )
         calls: list[tuple[float, Any]] = []
 
@@ -754,14 +754,14 @@ class TestRecordRecovery:
         hub._handle_status_update({str(RECORD_DP): False})
         await hub._config_entry.wait()
 
-        assert calls and calls[0][0] == hub_module.RECORD_RECOVERY_DELAY
+        assert calls and calls[0][0] == hub_module.ONVIF_RECOVERY_DELAY
         assert hub._connection.set_calls == [{str(RECORD_DP): True}]
 
     @pytest.mark.asyncio
     async def test_no_role_means_no_recovery(self, tmp_path):
         hub = make_hub(
             tmp_path,
-            options={CONF_FORCE_RECORD_ON: True},
+            options={CONF_FORCE_ONVIF: True},
             profile=doorbell_profile(),
         )
         hub._call_later = lambda delay, action: pytest.fail("should not schedule")
@@ -1479,3 +1479,40 @@ class TestTestSnapshotButton:
         hub = make_hub(tmp_path, provider=provider)
         assert await hub.async_capture_test_snapshot() is False
         assert provider.grabs == []
+
+
+class TestForceOnvifMigration:
+    """The force option was renamed from force_record_on to force_onvif.
+
+    An entry saved by an older version stores the old key; it must keep working,
+    or upgrading would silently stop ONVIF being pushed back on and the RTSP
+    stream would quietly die after a reboot.
+    """
+
+    @pytest.mark.asyncio
+    async def test_the_legacy_option_key_still_triggers_recovery(self, tmp_path):
+        hub = make_hub(
+            tmp_path,
+            options={"force_record_on": True},  # the pre-3.4.0 name
+            profile=doorbell_profile(onvif=RECORD_DP),
+        )
+        calls: list[tuple[float, Any]] = []
+        hub._call_later = lambda delay, action: calls.append((delay, action)) or (lambda: None)
+
+        hub._handle_status_update({str(RECORD_DP): False})
+
+        assert calls, "legacy force_record_on option did not trigger ONVIF recovery"
+
+    @pytest.mark.asyncio
+    async def test_the_new_key_wins_over_the_legacy_one(self, tmp_path):
+        hub = make_hub(
+            tmp_path,
+            options={"force_record_on": True, CONF_FORCE_ONVIF: False},
+            profile=doorbell_profile(onvif=RECORD_DP),
+        )
+        calls: list[tuple[float, Any]] = []
+        hub._call_later = lambda delay, action: calls.append((delay, action)) or (lambda: None)
+
+        hub._handle_status_update({str(RECORD_DP): False})
+
+        assert not calls, "new force_onvif=False should override the legacy key"

@@ -108,7 +108,7 @@ This is the part that decides whether the integration does anything at all.
 Read it once.
 
 A Tuya device exposes numbered **datapoints** (DPs). DP 101 might be the
-recording switch, DP 185 might be the doorbell button. *Might*: the numbers
+ONVIF switch, DP 185 might be the doorbell button. *Might*: the numbers
 differ per model and per firmware generation, and even the same model changes
 them across firmware revisions. The v4 and v5 firmware of the same LSC doorbell
 disagree about DP 109, 110 and 134 — one calls 110 "SD Card Status", the other
@@ -125,7 +125,7 @@ So the integration no longer guesses. It reads **roles**:
 |---|---|
 | `doorbell_button` | The button-press event, the doorbell event entity, the snapshot |
 | `motion` | The motion event and motion entity |
-| `record_switch` | The recording switch, including the *auto-enable* recovery option |
+| `onvif` | The ONVIF switch (which also enables the RTSP stream), including the *auto-enable* recovery option |
 
 A role points at whichever datapoint holds it *on your device*. A role nobody
 claims means that behaviour is **off** — there is no fallback to a number,
@@ -157,7 +157,7 @@ stop it:
 6. Tick **Done — stop capturing** when you have triggered everything.
 7. **Capture Results** — pick the datapoints to keep.
 8. **Assign Roles** — say which datapoint is the doorbell button, which is
-   motion, and which is the recording switch. Leave a role empty and it stays
+   motion, and which is the ONVIF switch. Leave a role empty and it stays
    off.
 
 Nothing is written to the device profile until you have made that last choice.
@@ -346,7 +346,7 @@ pulling from.
 | Menu item | Contains |
 |---|---|
 | **Connection settings** | IP address, port, protocol version |
-| **Camera settings** | ONVIF/RTSP credentials, port, stream path, snapshot directory, auto-enable record switch, snapshot trigger datapoints, stream URL override, still image URL override |
+| **Camera settings** | ONVIF/RTSP credentials, port, stream path, snapshot directory, force ONVIF on, snapshot trigger datapoints, stream URL override, still image URL override |
 | **Snapshot settings** | Snapshot mode, buffer directory, buffer length, look back by |
 | **Manage datapoints** | Edit, add and remove datapoints |
 | **Scan for datapoints** | Full DP 1-255 scan |
@@ -361,7 +361,7 @@ pulling from.
 | RTSP port | `8554` | |
 | RTSP stream path | `/Streaming/Channels/101` | Channel 101 is the main stream |
 | Snapshot save directory | `/config/www/doorbell` | Below `<config>/www` to get a `/local/` URL |
-| Auto-enable the record switch | off | Some Tuya devices turn recording — and with it ONVIF — off by themselves. This pushes it back on after two seconds |
+| Force ONVIF on | off | Some Tuya devices turn ONVIF — and with it the RTSP stream — off by themselves, for instance after a reboot. This pushes it back on after two seconds. Needs the `onvif` role assigned to a datapoint |
 | Take a snapshot when these datapoints fire | *(empty)* | Empty means: whichever datapoint holds the `doorbell_button` role. Only datapoints your device actually reports are listed |
 | Stream URL override | *(empty)* | Replaces the URL built from host/port/path |
 | Still image URL override | *(empty)* | An HTTP URL returning a single JPEG |

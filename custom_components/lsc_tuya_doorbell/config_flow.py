@@ -33,7 +33,8 @@ from .const import (
     CONF_DEVICE_ID,
     CONF_DEVICE_NAME,
     CONF_DEBUG_EVENTS,
-    CONF_FORCE_RECORD_ON,
+    CONF_FORCE_ONVIF,
+    LEGACY_FORCE_RECORD_OPTION,
     CONF_HOST,
     CONF_LOCAL_KEY,
     CONF_ONVIF_PASSWORD,
@@ -74,7 +75,7 @@ from .const import (
     MAX_BUFFER_SECONDS,
     MAX_SNAPSHOT_DELAY_MS,
     MIN_BUFFER_SECONDS,
-    ROLE_RECORD_SWITCH,
+    ROLE_ONVIF,
     ROLES,
 )
 from .discovery import DiscoveredDevice, async_discover_devices
@@ -1195,7 +1196,7 @@ class LscTuyaDoorbellOptionsFlow(OptionsFlow):
                 CONF_SNAPSHOT_PATH: user_input.get(
                     CONF_SNAPSHOT_PATH, DEFAULT_SNAPSHOT_PATH
                 ),
-                CONF_FORCE_RECORD_ON: user_input.get(CONF_FORCE_RECORD_ON, False),
+                CONF_FORCE_ONVIF: user_input.get(CONF_FORCE_ONVIF, False),
             }
             if self._pending_video_source == VIDEO_SOURCE_RESTREAM:
                 return await self.async_step_camera_restream()
@@ -1216,22 +1217,25 @@ class LscTuyaDoorbellOptionsFlow(OptionsFlow):
                             ),
                         ): str,
                         vol.Optional(
-                            CONF_FORCE_RECORD_ON,
-                            default=opts.get(CONF_FORCE_RECORD_ON, False),
+                            CONF_FORCE_ONVIF,
+                            default=opts.get(
+                                CONF_FORCE_ONVIF,
+                                opts.get(LEGACY_FORCE_RECORD_OPTION, False),
+                            ),
                         ): bool,
                     }
                 )
             ),
             description_placeholders={
-                "record_role": self._role_state(ROLE_RECORD_SWITCH),
+                "onvif_role": self._role_state(ROLE_ONVIF),
             },
         )
 
     def _role_state(self, role: str) -> str:
         """Whether a role is pointed at a datapoint, in words.
 
-        'Force recording on' does nothing at all without the record_switch
-        role, and there is no way to tell from the checkbox itself.
+        'Force ONVIF' does nothing at all without the ONVIF role, and there
+        is no way to tell from the checkbox itself.
         """
         hub = self._get_hub()
         profile = getattr(hub, "profile", None) if hub is not None else None

@@ -29,7 +29,7 @@ from .const import (
     ENTITY_EVENT,
     ROLE_DOORBELL_BUTTON,
     ROLE_MOTION,
-    ROLE_RECORD_SWITCH,
+    ROLE_ONVIF,
 )
 from .dp_registry import DeviceProfile, DPDefinition
 from .video import build_rtsp_url
@@ -65,7 +65,7 @@ ROLE_EVENT_DEVICE_CLASS: dict[str, str] = {
 ROLE_ICONS: dict[str, str] = {
     ROLE_DOORBELL_BUTTON: "mdi:doorbell-video",
     ROLE_MOTION: "mdi:motion-sensor",
-    ROLE_RECORD_SWITCH: "mdi:record-rec",
+    ROLE_ONVIF: "mdi:cctv",
 }
 
 # Event types are part of an event entity's identity: renaming one breaks every
