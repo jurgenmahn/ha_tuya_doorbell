@@ -5,6 +5,16 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.9.0] - 2026-08-30
+
+### Added
+
+- A **media source** for the recorded clips. Clip mode writes an mp4 per event
+  but a clip has no native entity to display it; the clips now appear under
+  Media → Doorbell clips (per device, newest first) and play on any media player
+  or in the browser. The poster frame in the image entity stays as a quick
+  preview; this is where the actual videos live.
+
 ## [3.8.0] - 2026-08-30
 
 ### Changed

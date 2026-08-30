@@ -8,7 +8,8 @@
   "dependencies": [
     "network",
     "stream",
-    "ffmpeg"
+    "ffmpeg",
+    "media_source"
   ],
   "documentation": "https://github.com/jurgenmahn/ha_tuya_doorbell",
   "integration_type": "device",
@@ -18,5 +19,5 @@
     "custom_components.lsc_tuya_doorbell"
   ],
   "requirements": [],
-  "version": "3.8.0"
+  "version": "3.9.0"
 }

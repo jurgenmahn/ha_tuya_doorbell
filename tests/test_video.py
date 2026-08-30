@@ -1086,3 +1086,23 @@ class TestClip:
         provider, _, _, _ = make_provider(tmp_path, mode=MODE_CLIP, spawn=spawn)
 
         assert await provider.async_clip(str(tmp_path / "clip.mp4")) is False
+
+
+class TestClipFilenames:
+    """The media source lists clips newest-first; a missing dir is just empty."""
+
+    def test_lists_only_mp4_newest_first(self, tmp_path):
+        import os, time
+        from custom_components.lsc_tuya_doorbell.media_helpers import clip_filenames
+        for i, name in enumerate(["a.mp4", "b.mp4", "c.mp4"]):
+            f = tmp_path / name
+            f.write_bytes(b"x")
+            os.utime(f, (1000 + i, 1000 + i))  # a oldest, c newest
+        (tmp_path / "notes.txt").write_bytes(b"x")
+        (tmp_path / "poster.jpg").write_bytes(b"x")
+
+        assert clip_filenames(str(tmp_path)) == ["c.mp4", "b.mp4", "a.mp4"]
+
+    def test_missing_directory_is_empty_not_an_error(self, tmp_path):
+        from custom_components.lsc_tuya_doorbell.media_helpers import clip_filenames
+        assert clip_filenames(str(tmp_path / "nope")) == []
