@@ -18,6 +18,7 @@ import pytest
 
 from custom_components.lsc_tuya_doorbell.video import (
     MODE_BUFFER,
+    MODE_CLIP,
     MODE_OFF,
     MODE_ON_DEMAND,
     MODE_WARM,
@@ -26,6 +27,8 @@ from custom_components.lsc_tuya_doorbell.video import (
     SnapshotConfig,
     SnapshotProvider,
     build_buffer_args,
+    build_clip_args,
+    build_concat_list,
     build_live_grab_args,
     build_rtsp_url,
     build_segment_grab_args,
@@ -1024,3 +1027,62 @@ def test_a_source_that_can_never_be_recorded_is_given_up_on():
     # Giving up must come after the backoff has actually stretched out, so a
     # brief camera reboot is ridden out rather than treated as fatal.
     assert MAX_CONSECUTIVE_FAILURES >= len(RESTART_BACKOFF)
+
+
+class TestClip:
+    """The 'clip' mode: stream-copy the whole buffer into one mp4."""
+
+    def test_concat_list_is_one_file_line_per_segment_in_order(self):
+        listing = build_concat_list(["/buf/1.ts", "/buf/2.ts"])
+        assert listing == "file '/buf/1.ts'\nfile '/buf/2.ts'\n"
+
+    def test_concat_list_escapes_single_quotes(self):
+        listing = build_concat_list(["/buf/o'brien.ts"])
+        assert listing == "file '/buf/o'\\''brien.ts'\n"
+
+    def test_clip_args_concatenate_without_re_encoding(self):
+        args = build_clip_args("ffmpeg", "/buf/list.txt", "/out/clip.mp4")
+        assert "-f" in args and "concat" in args
+        assert args[args.index("-c") + 1] == "copy"
+        assert args[-1] == "/out/clip.mp4"
+
+    @pytest.mark.asyncio
+    async def test_clip_concatenates_all_but_the_newest_segment(self, tmp_path):
+        buf = tmp_path / "buffer"
+        buf.mkdir()
+        for start in (100, 101, 102):
+            (buf / f"{start}.ts").write_bytes(b"x" * 1000)
+        spawn = FakeSpawn([FakeProcess(returncode=0)])
+        provider, _, _, _ = make_provider(tmp_path, mode=MODE_CLIP, spawn=spawn)
+
+        ok = await provider.async_clip(str(tmp_path / "clip.mp4"))
+
+        assert ok is True
+        # The concat list was written from the two oldest; the newest (102, still
+        # being appended) is dropped, and the ffmpeg target is our path.
+        assert spawn.last[-1] == str(tmp_path / "clip.mp4")
+        listing = (buf / "clip_concat.txt")
+        # cleaned up afterwards
+        assert not listing.exists()
+
+    @pytest.mark.asyncio
+    async def test_clip_needs_at_least_two_segments(self, tmp_path):
+        buf = tmp_path / "buffer"
+        buf.mkdir()
+        (buf / "100.ts").write_bytes(b"x" * 1000)  # only one, and it is the newest
+        spawn = FakeSpawn([FakeProcess(returncode=0)])
+        provider, _, _, _ = make_provider(tmp_path, mode=MODE_CLIP, spawn=spawn)
+
+        assert await provider.async_clip(str(tmp_path / "clip.mp4")) is False
+        assert spawn.calls == []  # never ran ffmpeg
+
+    @pytest.mark.asyncio
+    async def test_clip_reports_failure_when_ffmpeg_fails(self, tmp_path):
+        buf = tmp_path / "buffer"
+        buf.mkdir()
+        for start in (100, 101, 102):
+            (buf / f"{start}.ts").write_bytes(b"x" * 1000)
+        spawn = FakeSpawn([FakeProcess(returncode=1, stderr=b"boom")])
+        provider, _, _, _ = make_provider(tmp_path, mode=MODE_CLIP, spawn=spawn)
+
+        assert await provider.async_clip(str(tmp_path / "clip.mp4")) is False

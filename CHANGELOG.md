@@ -5,6 +5,18 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.5.0] - 2026-08-30
+
+### Added
+
+- A **clip** snapshot mode. Like buffer, it keeps a rolling ring of video on
+  tmpfs; but when the doorbell fires it stream-copies the whole buffer into a
+  single mp4 (no re-encoding, so it is cheap even on a slow host) and fires a
+  `lsc_tuya_doorbell_clip_ready` event carrying the clip URL, with `last_clip_url`
+  also exposed as an attribute. Because the device reports a press a couple of
+  seconds late, the moment of the press sits comfortably inside the saved clip.
+  The existing buffer-length setting doubles as the clip length in this mode.
+
 ## [3.4.0] - 2026-08-30
 
 ### Changed

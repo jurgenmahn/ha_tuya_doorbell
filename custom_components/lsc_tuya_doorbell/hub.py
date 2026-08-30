@@ -85,6 +85,7 @@ from .const import (
     EVENT_DISCONNECTED,
     EVENT_DP_DISCOVERED,
     EVENT_DEBUG_DP,
+    EVENT_CLIP_READY,
     EVENT_DP_EVENT,
     EVENT_IP_CHANGED,
     EVENT_MOTION_DETECT,
@@ -94,6 +95,7 @@ from .const import (
     ISSUE_NO_DOORBELL_ROLE,
     LOCAL_URL_PREFIX,
     MAX_BUFFER_SECONDS,
+    MAX_CLIPS,
     MAX_SNAPSHOTS,
     MAX_SNAPSHOT_DELAY_MS,
     MIN_BUFFER_SECONDS,
@@ -248,6 +250,49 @@ def snapshot_filename(slug: str, moment: float) -> str:
     return f"{slug}_{stamp}_{int(moment * 1_000_000) % 1_000_000:06d}.jpg"
 
 
+def clip_filename(slug: str, moment: float) -> str:
+    """Build a clip filename with the same sub-second uniqueness as snapshots."""
+    stamp = time.strftime("%Y%m%d_%H%M%S", time.localtime(moment))
+    return f"{slug}_{stamp}_{int(moment * 1_000_000) % 1_000_000:06d}.mp4"
+
+
+def prepare_clip_target(directory: str, filename: str, slug: str, keep: int) -> str:
+    """Create the directory, reserve a free .mp4 path, and prune old clips.
+
+    ffmpeg writes the file itself, so unlike write_snapshot this only picks the
+    name and cleans up. Runs in an executor thread -- mkdir/glob/unlink block.
+    """
+    target = Path(directory)
+    target.mkdir(parents=True, exist_ok=True)
+
+    file_path = target / filename
+    index = 1
+    while file_path.exists():
+        file_path = target / f"{Path(filename).stem}-{index}{Path(filename).suffix}"
+        index += 1
+
+    existing = sorted(
+        (f for f in target.glob(f"{slug}_*.mp4") if f.is_file()),
+        key=lambda f: f.stat().st_mtime,
+    )
+    # +1: we are about to add one, so keep only (keep - 1) of the existing files.
+    for old in existing[: max(0, len(existing) + 1 - keep)]:
+        try:
+            old.unlink()
+        except OSError as err:
+            _LOGGER.warning("Could not delete old clip %s: %s", old, err)
+
+    return str(file_path)
+
+
+def _remove_quietly(path: str) -> None:
+    """Delete a file, ignoring the case where it is already gone."""
+    try:
+        Path(path).unlink()
+    except OSError:
+        pass
+
+
 def device_name_slug(device_name: str) -> str:
     """Slugify a device name for the deprecated per-device event names."""
     return _SLUG_PATTERN.sub("_", device_name.lower()).strip("_")
@@ -355,6 +400,8 @@ class DeviceHub:
         # Snapshot state. The provider exists from construction on, so entities
         # can read its status before (and after) setup ran.
         self._last_snapshot_path: str | None = None
+        self._last_clip_path: str | None = None
+        self._last_clip_url: str | None = None
         self._last_snapshot_url: str | None = None
         self._snapshots = self._build_snapshot_provider()
         self._warned_no_www = False
@@ -495,6 +542,14 @@ class DeviceHub:
         return self._last_snapshot_url
 
     @property
+    def last_clip_path(self) -> str | None:
+        return self._last_clip_path
+
+    @property
+    def last_clip_url(self) -> str | None:
+        return self._last_clip_url
+
+    @property
     def stream_url(self) -> str | None:
         """The stream to pull frames from: the override, else the built URL.
 
@@ -537,6 +592,7 @@ class DeviceHub:
             "snapshot_mode": self._snapshots.active_mode,
             "snapshot_status": self._snapshots.status,
             "last_snapshot_url": self._last_snapshot_url,
+            "last_clip_url": self._last_clip_url,
             "last_snapshot_path": self._last_snapshot_path,
             "roles": dict(self._profile.roles) if self._profile else {},
         }
@@ -1376,11 +1432,18 @@ class DeviceHub:
             )
             return
 
-        self._spawn(
-            self._async_snapshot_for_event(payload),
-            f"snapshot_{self._device_id}_{counter}",
-            track=True,
-        )
+        if self._option(CONF_SNAPSHOT_MODE, video.DEFAULT_SNAPSHOT_MODE) == video.MODE_CLIP:
+            self._spawn(
+                self._async_clip_for_event(payload),
+                f"clip_{self._device_id}_{counter}",
+                track=True,
+            )
+        else:
+            self._spawn(
+                self._async_snapshot_for_event(payload),
+                f"snapshot_{self._device_id}_{counter}",
+                track=True,
+            )
 
     def _event_payload(
         self,
@@ -1517,6 +1580,50 @@ class DeviceHub:
         # attribute, and is not a bus event, so no automation sees it.
         self._notify_snapshot_callbacks(url)
         return True
+
+    async def _async_clip_for_event(self, payload: dict[str, Any]) -> None:
+        """Write the buffer to an mp4 clip for an event that has already fired.
+
+        Runs in the 'clip' snapshot mode instead of taking a still: the whole
+        rolling buffer is stream-copied into one file, so the visitor -- who the
+        device reports a couple of seconds after the press -- is inside it.
+        """
+        directory = self._option(CONF_SNAPSHOT_PATH, DEFAULT_SNAPSHOT_PATH)
+        slug = self._device_name_slug()
+        filename = clip_filename(slug, time.time())
+
+        try:
+            target = await self._run_in_executor(
+                prepare_clip_target, directory, filename, slug, MAX_CLIPS
+            )
+        except OSError as err:
+            _LOGGER.warning(
+                "Could not prepare the clip directory %s (%s); create it or point "
+                "the snapshot path somewhere writable", directory, err,
+            )
+            return
+
+        ok = await self._snapshots.async_clip(target)
+        if not ok:
+            _LOGGER.warning(
+                "No clip for the event on %s: %s",
+                self._device_name, self._snapshots.status,
+            )
+            await self._run_in_executor(_remove_quietly, target)
+            return
+
+        url = local_url_for(target, self._www_root())
+        self._last_clip_path = target
+        self._last_clip_url = url
+        _LOGGER.info("Clip saved: %s (url: %s)", target, url)
+
+        # Refresh the entities that expose last_clip_url as an attribute. The
+        # image entity harmlessly re-reads its (unchanged) still.
+        self._notify_snapshot_callbacks(self._last_snapshot_url)
+        self._fire_device_event(
+            EVENT_CLIP_READY,
+            {**payload, "clip_url": url, "clip_path": target},
+        )
 
 
     def _force_onvif(self) -> bool:

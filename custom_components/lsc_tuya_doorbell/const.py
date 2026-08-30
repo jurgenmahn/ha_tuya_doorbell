@@ -82,6 +82,8 @@ DEFAULT_RTSP_PORT = 8554
 DEFAULT_RTSP_PATH = "/Streaming/Channels/101"
 DEFAULT_SNAPSHOT_PATH = "/config/www/doorbell"
 MAX_SNAPSHOTS = 10
+# Clips are much larger than stills, so keep fewer of them.
+MAX_CLIPS = 5
 
 # Home Assistant serves <config>/www as /local. Only files below that directory
 # can be published as a URL; anything else gets a path and no URL, instead of a
@@ -196,6 +198,8 @@ EVENT_DISCONNECTED = f"{DOMAIN}_disconnected"
 EVENT_IP_CHANGED = f"{DOMAIN}_ip_changed"
 EVENT_DP_DISCOVERED = f"{DOMAIN}_dp_discovered"
 EVENT_SNAPSHOT_READY = f"{DOMAIN}_snapshot_ready"
+# Fired when a buffer clip (the "clip" snapshot mode) has been written.
+EVENT_CLIP_READY = f"{DOMAIN}_clip_ready"
 
 # Fired by the service handler, which carries a different payload than the hub's
 # own EVENT_DP_DISCOVERED. They used to share a name, so an automation listening

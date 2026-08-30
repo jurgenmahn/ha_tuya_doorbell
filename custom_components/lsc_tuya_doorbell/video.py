@@ -52,11 +52,21 @@ MODE_OFF = "off"
 MODE_ON_DEMAND = "on_demand"
 MODE_WARM = "warm"
 MODE_BUFFER = "buffer"
+MODE_CLIP = "clip"
 
-SNAPSHOT_MODES: tuple[str, ...] = (MODE_OFF, MODE_ON_DEMAND, MODE_WARM, MODE_BUFFER)
+SNAPSHOT_MODES: tuple[str, ...] = (
+    MODE_OFF, MODE_ON_DEMAND, MODE_WARM, MODE_BUFFER, MODE_CLIP,
+)
 
 #: Modes that keep a long-running ffmpeg alive.
-CONTINUOUS_MODES: tuple[str, ...] = (MODE_WARM, MODE_BUFFER)
+CONTINUOUS_MODES: tuple[str, ...] = (MODE_WARM, MODE_BUFFER, MODE_CLIP)
+#: Modes that run the segment ring buffer. "clip" records exactly like
+#: "buffer"; it just produces a video of the whole buffer instead of a still.
+BUFFERED_MODES: tuple[str, ...] = (MODE_BUFFER, MODE_CLIP)
+
+#: A clip is a stream copy of segments that already exist, so it is quick
+#: even for a long buffer; this only guards against a wedged ffmpeg.
+CLIP_TIMEOUT = 30.0
 
 
 # --- Defaults --------------------------------------------------------------
@@ -416,6 +426,47 @@ def build_segment_grab_args(ffmpeg_bin: str, path: str, offset: float) -> list[s
     ]
 
 
+def build_concat_list(segment_paths: Sequence[str]) -> str:
+    """The concat-demuxer playlist: one 'file' line per segment, in order."""
+    return "".join(
+        "file '{}'\n".format(path.replace("'", "'\\''")) for path in segment_paths
+    )
+
+
+def _write_concat_list(path: str, segment_paths: Sequence[str]) -> None:
+    """Write the concat playlist. Blocking -- call via an executor."""
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write(build_concat_list(segment_paths))
+
+
+def _safe_unlink(path: str) -> None:
+    """Delete a file if it exists, swallowing the race where it does not."""
+    with suppress(OSError):
+        os.unlink(path)
+
+
+def build_clip_args(ffmpeg_bin: str, list_path: str, target: str) -> list[str]:
+    """Concatenate buffered segments into one mp4 without re-encoding.
+
+    ``-c copy`` means no decode, so this stays cheap even for a long buffer. The
+    segments were all written by the same muxer from the same stream, so they
+    concatenate cleanly; ``+faststart`` moves the index to the front so the file
+    plays before it has fully downloaded.
+    """
+    return [
+        ffmpeg_bin,
+        *_COMMON_FLAGS,
+        "-f", "concat",
+        "-safe", "0",
+        "-i", list_path,
+        "-an",
+        "-c", "copy",
+        "-movflags", "+faststart",
+        "-y",
+        target,
+    ]
+
+
 def build_live_grab_args(ffmpeg_bin: str, source_url: str) -> list[str]:
     """One frame straight off the stream. The slow path, ~6 s on this camera."""
     return [
@@ -531,7 +582,7 @@ class SnapshotProvider:
             return False
         if self._active_mode == MODE_WARM:
             return self._running_since is not None
-        if self._active_mode == MODE_BUFFER:
+        if self._active_mode in BUFFERED_MODES:
             return self._running_since is not None and self._segment_count > 0
         return bool(self._config.still_url or self._config.source_url)
 
@@ -584,7 +635,7 @@ class SnapshotProvider:
         self._runner_task = self._make_task(
             self._runner_loop(), f"lsc_tuya_doorbell_snapshot_{mode}"
         )
-        if mode == MODE_BUFFER:
+        if mode in BUFFERED_MODES:
             self._cleanup_task = self._make_task(
                 self._cleanup_loop(), "lsc_tuya_doorbell_snapshot_cleanup"
             )
@@ -629,7 +680,7 @@ class SnapshotProvider:
             _LOGGER.debug("Snapshot requested while snapshots are off")
             return None
 
-        if self._active_mode == MODE_BUFFER:
+        if self._active_mode in BUFFERED_MODES:
             image = await self._grab_from_buffer(age_seconds)
             if image is not None:
                 return image
@@ -683,7 +734,7 @@ class SnapshotProvider:
             )
             return True
 
-        if self._config.mode == MODE_BUFFER:
+        if self._config.mode in BUFFERED_MODES:
             needed = estimate_buffer_bytes(
                 self._config.buffer_seconds, self._config.estimated_kbps
             )
@@ -815,7 +866,7 @@ class SnapshotProvider:
 
     def _build_capture_args(self) -> list[str]:
         source = self._config.source_url or ""
-        if self._active_mode == MODE_BUFFER:
+        if self._active_mode in BUFFERED_MODES:
             return build_buffer_args(
                 self._config.ffmpeg_bin,
                 source,
@@ -1094,6 +1145,67 @@ class SnapshotProvider:
             if process is not None:
                 await self._terminate(process)
         return None
+
+    async def async_clip(self, target_path: str) -> bool:
+        """Write the whole current buffer to an mp4 at ``target_path``.
+
+        Only meaningful while the ring buffer is running (buffer/clip mode). The
+        clip is as long as the buffer, ending a moment before now -- and since
+        the doorbell reports a press a couple of seconds late, the press itself
+        is comfortably inside it.
+        """
+        if self._active_mode not in BUFFERED_MODES:
+            _LOGGER.warning(
+                "Clip requested but the buffer is not running (mode %s)",
+                self._active_mode,
+            )
+            return False
+
+        segments = await self._job(scan_segments, self._config.buffer_path)
+        usable = sorted((s for s in segments if s.size > 0), key=lambda s: s.start)
+        if len(usable) < 2:
+            _LOGGER.warning(
+                "Not enough buffered video for a clip yet (%d segment(s)); the "
+                "buffer needs a few seconds after startup", len(usable),
+            )
+            return False
+
+        # Drop the newest segment: ffmpeg is still appending to it, and
+        # concatenating an in-progress file risks a truncated tail.
+        usable = usable[:-1]
+        list_path = os.path.join(self._config.buffer_path, "clip_concat.txt")
+        await self._job(_write_concat_list, list_path, [s.path for s in usable])
+        try:
+            return await self._run_clip(
+                build_clip_args(self._config.ffmpeg_bin, list_path, target_path),
+                CLIP_TIMEOUT,
+            )
+        finally:
+            await self._job(_safe_unlink, list_path)
+
+    async def _run_clip(self, args: Sequence[str], timeout: float) -> bool:
+        """Run a one-shot ffmpeg that writes a file; True on success."""
+        process: ProcessLike | None = None
+        try:
+            process = await self._spawn(args)
+            _, stderr = await asyncio.wait_for(process.communicate(), timeout)
+            if getattr(process, "returncode", None) == 0:
+                return True
+            _LOGGER.warning(
+                "Clip ffmpeg failed (rc=%s): %s",
+                getattr(process, "returncode", None),
+                (stderr or b"").decode(errors="replace")[:200],
+            )
+        except asyncio.TimeoutError:
+            _LOGGER.warning("Clip ffmpeg timed out after %.0f s", timeout)
+        except FileNotFoundError:
+            _LOGGER.error("ffmpeg not found — install ffmpeg to record clips")
+        except OSError as err:
+            _LOGGER.warning("Could not run ffmpeg for a clip: %s", err)
+        finally:
+            if process is not None:
+                await self._terminate(process)
+        return False
 
     # --- Small helpers ---
 

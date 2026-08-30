@@ -120,6 +120,7 @@ class LscTuyaBinarySensor(LscTuyaEntity, BinarySensorEntity):
             "event_counter": self._hub.event_count(self._dp_id),
             "last_image_url": self._last_image_url,
             "last_snapshot_url": self._hub.last_snapshot_url,
+            "last_clip_url": self._hub.last_clip_url,
         }
 
     async def async_added_to_hass(self) -> None:

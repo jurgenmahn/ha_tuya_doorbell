@@ -229,6 +229,15 @@ def snapshot_fields_for(mode: str) -> tuple[str, ...]:
             CONF_SNAPSHOT_TRIGGER_DPS,
             CONF_SNAPSHOT_SOURCE_URL,
         )
+    if mode == video.MODE_CLIP:
+        # Same recorder as buffer, minus the still-only look-back delay: a clip
+        # is the whole buffer, so the buffer length is the clip length.
+        return (
+            CONF_SNAPSHOT_TRIGGER_DPS,
+            CONF_SNAPSHOT_SOURCE_URL,
+            CONF_SNAPSHOT_BUFFER_PATH,
+            CONF_SNAPSHOT_BUFFER_SECONDS,
+        )
     return (CONF_SNAPSHOT_TRIGGER_DPS, CONF_STILL_IMAGE_URL_OVERRIDE)
 
 

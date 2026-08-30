@@ -41,6 +41,7 @@ from custom_components.lsc_tuya_doorbell.const import (
     ENTITY_BINARY_SENSOR,
     ENTITY_SWITCH,
     EVENT_BUTTON_PRESS,
+    EVENT_CLIP_READY,
     EVENT_DEBUG_DP,
     EVENT_DP_EVENT,
     EVENT_IP_CHANGED,
@@ -138,6 +139,8 @@ class FakeProvider:
         self._available = available
         self.error: Exception | None = None
         self.grabs: list[float] = []
+        self.clips: list[str] = []
+        self.clip_ok = True
         self.started = False
         self.stopped = False
         self.active_mode = "fake"
@@ -153,6 +156,10 @@ class FakeProvider:
         if self.error is not None:
             raise self.error
         return self.image
+
+    async def async_clip(self, target_path: str) -> bool:
+        self.clips.append(target_path)
+        return self.clip_ok
 
     @property
     def available(self) -> bool:
@@ -1516,3 +1523,48 @@ class TestForceOnvifMigration:
         hub._handle_status_update({str(RECORD_DP): False})
 
         assert not calls, "new force_onvif=False should override the legacy key"
+
+
+class TestClipForEvent:
+    """Clip mode saves a video for the event instead of a still."""
+
+    @pytest.mark.asyncio
+    async def test_clip_mode_fires_clip_ready_and_takes_no_still(self, tmp_path):
+        provider = FakeProvider()
+        hub = make_hub(
+            tmp_path,
+            options={
+                CONF_SNAPSHOT_MODE: "clip",
+                CONF_SNAPSHOT_PATH: str(tmp_path / "www" / "doorbell"),
+            },
+            profile=doorbell_profile(doorbell_button=DOORBELL_DP),
+            provider=provider,
+        )
+
+        hub._handle_status_update({str(DOORBELL_DP): "x"})
+        await hub._config_entry.wait()
+
+        ready = hub._hass.bus.payload(EVENT_CLIP_READY)
+        assert ready["clip_url"] == hub.last_clip_url
+        assert provider.clips == [hub.last_clip_path]
+        assert EVENT_SNAPSHOT_READY not in hub._hass.bus.names()
+
+    @pytest.mark.asyncio
+    async def test_a_failed_clip_fires_nothing(self, tmp_path):
+        provider = FakeProvider()
+        provider.clip_ok = False
+        hub = make_hub(
+            tmp_path,
+            options={
+                CONF_SNAPSHOT_MODE: "clip",
+                CONF_SNAPSHOT_PATH: str(tmp_path / "www" / "doorbell"),
+            },
+            profile=doorbell_profile(doorbell_button=DOORBELL_DP),
+            provider=provider,
+        )
+
+        hub._handle_status_update({str(DOORBELL_DP): "x"})
+        await hub._config_entry.wait()
+
+        assert EVENT_CLIP_READY not in hub._hass.bus.names()
+        assert hub.last_clip_url is None
