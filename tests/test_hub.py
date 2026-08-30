@@ -1568,3 +1568,26 @@ class TestClipForEvent:
 
         assert EVENT_CLIP_READY not in hub._hass.bus.names()
         assert hub.last_clip_url is None
+
+
+class TestTestButtonInClipMode:
+    """The Test button follows the mode: a clip in clip mode, a still otherwise."""
+
+    @pytest.mark.asyncio
+    async def test_it_makes_a_clip_and_fires_no_event(self, tmp_path):
+        provider = FakeProvider()
+        hub = make_hub(
+            tmp_path,
+            options={
+                CONF_SNAPSHOT_MODE: "clip",
+                CONF_SNAPSHOT_PATH: str(tmp_path / "www" / "doorbell"),
+            },
+            provider=provider,
+        )
+
+        ok = await hub.async_capture_test_snapshot()
+
+        assert ok is True
+        assert provider.clips == [hub.last_clip_path]
+        assert hub.last_clip_url is not None
+        assert hub._hass.bus.events == []  # a test never rings anything

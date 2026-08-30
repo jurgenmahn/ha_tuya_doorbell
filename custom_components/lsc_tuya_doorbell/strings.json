@@ -181,7 +181,7 @@
           "back": "Back to the options menu (nothing on this screen is saved)"
         },
         "data_description": {
-          "snapshot_mode": "'Off' takes no pictures at all. 'On demand' starts one ffmpeg per press: slow, but it needs nothing and works anywhere, which is why it is the default. 'Warm' keeps one ffmpeg running so a still is always about a second old. 'Buffer' additionally keeps the last minute of video on tmpfs and is the only mode that can look back in time — which matters, because the device reports a press three to five seconds after it happened."
+          "snapshot_mode": "'Off' takes no pictures at all. 'On demand' starts one ffmpeg per press: slow, but it needs nothing and works anywhere, which is why it is the default. 'Warm' keeps one ffmpeg running so a still is always about a second old. 'Buffer' additionally keeps the last minute of video on tmpfs and is the only mode that can look back in time — which matters, because the device reports a press three to five seconds after it happened. 'Clip' records like buffer but, instead of a still, saves the whole buffer as a short video when the doorbell fires — handy on a slow host, or when you want the moments around the press."
         }
       },
       "dp_scan_mode": {
@@ -273,7 +273,7 @@
         "data": {
           "snapshot_trigger_dps": "Take a snapshot when these datapoints fire",
           "snapshot_buffer_path": "Buffer directory",
-          "snapshot_buffer_seconds": "Buffer length",
+          "snapshot_buffer_seconds": "Buffer / clip length",
           "snapshot_delay_ms": "Look back by",
           "back": "Back to the options menu (nothing from these two screens is saved)",
           "still_image_url_override": "Still image URL",

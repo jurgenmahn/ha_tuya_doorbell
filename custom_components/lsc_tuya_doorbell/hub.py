@@ -1539,19 +1539,26 @@ class DeviceHub:
         return file_path, url
 
     async def async_capture_test_snapshot(self) -> bool:
-        """Take a snapshot now and show it, without firing any doorbell event.
+        """Capture now and show the result, without firing any doorbell event.
 
-        This is the "does my snapshot configuration actually work" button: it
-        runs the exact same grab-and-store path an event would, updates the image
-        entity, but fires no button/motion/snapshot event -- so testing it does
-        not ring anything or trip an automation.
+        The "does my configuration actually work" button. In clip mode it makes a
+        clip; otherwise a still that lands in the image entity. Either way it
+        fires no button/motion/snapshot/clip event, so testing rings nothing and
+        trips no automation.
         """
         if not self._snapshots.available:
             _LOGGER.warning(
-                "Test snapshot for %s skipped: %s",
+                "Test capture for %s skipped: %s",
                 self._device_name, self._snapshots.status,
             )
             return False
+
+        # In clip mode the thing to test is the clip, not a still.
+        if self._option(CONF_SNAPSHOT_MODE, video.DEFAULT_SNAPSHOT_MODE) == video.MODE_CLIP:
+            ok = await self._produce_clip()
+            if ok:
+                _LOGGER.info("Test clip saved: %s", self._last_clip_url)
+            return ok
 
         try:
             image = await self._snapshots.async_grab()
@@ -1581,12 +1588,11 @@ class DeviceHub:
         self._notify_snapshot_callbacks(url)
         return True
 
-    async def _async_clip_for_event(self, payload: dict[str, Any]) -> None:
-        """Write the buffer to an mp4 clip for an event that has already fired.
+    async def _produce_clip(self) -> bool:
+        """Stream-copy the whole buffer into one mp4 and record where it went.
 
-        Runs in the 'clip' snapshot mode instead of taking a still: the whole
-        rolling buffer is stream-copied into one file, so the visitor -- who the
-        device reports a couple of seconds after the press -- is inside it.
+        Shared by the doorbell event and the test button. Fires no event itself;
+        the caller decides whether this clip is worth announcing.
         """
         directory = self._option(CONF_SNAPSHOT_PATH, DEFAULT_SNAPSHOT_PATH)
         slug = self._device_name_slug()
@@ -1601,29 +1607,36 @@ class DeviceHub:
                 "Could not prepare the clip directory %s (%s); create it or point "
                 "the snapshot path somewhere writable", directory, err,
             )
-            return
+            return False
 
         ok = await self._snapshots.async_clip(target)
         if not ok:
             _LOGGER.warning(
-                "No clip for the event on %s: %s",
-                self._device_name, self._snapshots.status,
+                "No clip for %s: %s", self._device_name, self._snapshots.status,
             )
             await self._run_in_executor(_remove_quietly, target)
-            return
+            return False
 
         url = local_url_for(target, self._www_root())
         self._last_clip_path = target
         self._last_clip_url = url
         _LOGGER.info("Clip saved: %s (url: %s)", target, url)
-
         # Refresh the entities that expose last_clip_url as an attribute. The
         # image entity harmlessly re-reads its (unchanged) still.
         self._notify_snapshot_callbacks(self._last_snapshot_url)
-        self._fire_device_event(
-            EVENT_CLIP_READY,
-            {**payload, "clip_url": url, "clip_path": target},
-        )
+        return True
+
+    async def _async_clip_for_event(self, payload: dict[str, Any]) -> None:
+        """Write a buffer clip for an event that has already fired, and announce it."""
+        if await self._produce_clip():
+            self._fire_device_event(
+                EVENT_CLIP_READY,
+                {
+                    **payload,
+                    "clip_url": self._last_clip_url,
+                    "clip_path": self._last_clip_path,
+                },
+            )
 
 
     def _force_onvif(self) -> bool:

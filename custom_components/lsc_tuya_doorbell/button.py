@@ -32,10 +32,13 @@ async def async_setup_entry(
 
 
 class LscTuyaTestSnapshotButton(ButtonEntity):
-    """Captures a snapshot on demand to test the snapshot settings."""
+    """Captures on demand to test the snapshot/clip settings.
+
+    In clip mode it makes a clip; otherwise a still shown in the image entity.
+    """
 
     _attr_has_entity_name = True
-    _attr_name = "Test snapshot"
+    _attr_name = "Test capture"
     _attr_icon = "mdi:camera-iris"
 
     def __init__(self, hub: DeviceHub) -> None:
@@ -52,10 +55,10 @@ class LscTuyaTestSnapshotButton(ButtonEntity):
         return self._hub.available
 
     async def async_press(self) -> None:
-        """Take a snapshot now; the result shows up in the snapshot image entity."""
+        """Capture now; a still lands in the image entity, a clip in last_clip_url."""
         ok = await self._hub.async_capture_test_snapshot()
         if not ok:
             _LOGGER.warning(
-                "Test snapshot did not produce an image; check the snapshot mode "
+                "Test capture did not produce anything; check the snapshot mode "
                 "and stream/still settings"
             )

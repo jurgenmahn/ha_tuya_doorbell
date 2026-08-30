@@ -5,6 +5,18 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.6.0] - 2026-08-30
+
+### Changed
+
+- The **Test** button now follows the snapshot mode: in clip mode it makes a
+  clip (recorded to `last_clip_url`) instead of a still, so clip settings can be
+  tested without ringing. Renamed to "Test capture" to match. In every other
+  mode it still produces a still in the image entity, and still fires no event.
+- The buffer-length setting is labelled "Buffer / clip length" and the snapshot
+  mode description explains the clip mode, so the shared setting reads sensibly
+  whichever of the two modes is chosen.
+
 ## [3.5.0] - 2026-08-30
 
 ### Added
