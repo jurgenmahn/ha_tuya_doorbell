@@ -209,14 +209,15 @@ def snapshot_fields_for(mode: str) -> tuple[str, ...]:
     Offering the buffer directory to someone running 'on demand' is offering a
     setting that is read and then ignored; the buffer is the only mode that
     keeps video around, and 'off' takes no pictures at all so it has nothing to
-    be triggered by.
+    be triggered by. The still image URL only belongs to 'on demand': it returns
+    the picture as it is now, so it cannot serve a mode whose whole point is a
+    frame from the past ('buffer') or a pre-warmed stream ('warm').
     """
     if mode == video.MODE_OFF:
         return ()
     if mode == video.MODE_BUFFER:
         return (
             CONF_SNAPSHOT_TRIGGER_DPS,
-            CONF_STILL_IMAGE_URL_OVERRIDE,
             CONF_SNAPSHOT_SOURCE_URL,
             CONF_SNAPSHOT_BUFFER_PATH,
             CONF_SNAPSHOT_BUFFER_SECONDS,
@@ -225,7 +226,6 @@ def snapshot_fields_for(mode: str) -> tuple[str, ...]:
     if mode == video.MODE_WARM:
         return (
             CONF_SNAPSHOT_TRIGGER_DPS,
-            CONF_STILL_IMAGE_URL_OVERRIDE,
             CONF_SNAPSHOT_SOURCE_URL,
         )
     return (CONF_SNAPSHOT_TRIGGER_DPS, CONF_STILL_IMAGE_URL_OVERRIDE)

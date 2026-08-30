@@ -1005,7 +1005,6 @@ class TestSnapshotModeSplit:
         fields = config_flow.snapshot_fields_for("buffer")
         assert set(fields) == {
             "snapshot_trigger_dps",
-            "still_image_url_override",
             "snapshot_source_url",
             "snapshot_buffer_path",
             "snapshot_buffer_seconds",
@@ -1044,7 +1043,6 @@ class TestSnapshotModeSplit:
         assert result["step_id"] == "snapshot_options"
         assert _fields(result) == {
             "snapshot_trigger_dps",
-            "still_image_url_override",
             "snapshot_source_url",
             "back",
         }
@@ -1056,7 +1054,6 @@ class TestSnapshotModeSplit:
 
         assert _fields(result) == {
             "snapshot_trigger_dps",
-            "still_image_url_override",
             "snapshot_source_url",
             "snapshot_buffer_path",
             "snapshot_buffer_seconds",
@@ -1070,7 +1067,6 @@ class TestSnapshotModeSplit:
         result = await flow.async_step_snapshot_settings({"snapshot_mode": "warm"})
         # No datapoints means no trigger list; the picture settings still apply.
         assert _fields(result) == {
-            "still_image_url_override",
             "snapshot_source_url",
             "back",
         }
@@ -1412,9 +1408,13 @@ class TestTheStillUrlIsASnapshotSetting:
             assert result["step_id"] == step
             assert "still_image_url_override" not in _fields(result)
 
-    @pytest.mark.parametrize("mode", ["on_demand", "warm", "buffer"])
-    def test_every_mode_that_takes_a_picture_asks_for_it(self, mode):
-        assert "still_image_url_override" in config_flow.snapshot_fields_for(mode)
+    def test_only_on_demand_asks_for_the_still_url(self):
+        """A still URL returns the picture as it is now, so it only fits the mode
+        that also takes the picture now. In buffer/warm it would quietly hand
+        back a live frame in place of the past one they exist to provide."""
+        assert "still_image_url_override" in config_flow.snapshot_fields_for("on_demand")
+        for mode in ("warm", "buffer", "off"):
+            assert "still_image_url_override" not in config_flow.snapshot_fields_for(mode)
 
     def test_the_mode_that_takes_no_pictures_does_not(self):
         assert config_flow.snapshot_fields_for("off") == ()

@@ -227,6 +227,8 @@ PLATFORMS = [
     "select",
     "number",
     "camera",
+    "image",
+    "button",
 ]
 
 # SD Card status mapping

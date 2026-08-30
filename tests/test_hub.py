@@ -20,9 +20,12 @@ from typing import Any
 import pytest
 
 from custom_components.lsc_tuya_doorbell import hub as hub_module
+from custom_components.lsc_tuya_doorbell import video
 from custom_components.lsc_tuya_doorbell.const import (
     CONF_DEVICE_ID,
     CONF_DEBUG_EVENTS,
+    CONF_SNAPSHOT_MODE,
+    CONF_STILL_IMAGE_URL_OVERRIDE,
     CONF_FORCE_RECORD_ON,
     CONF_HOST,
     CONF_LOCAL_KEY,
@@ -1407,3 +1410,72 @@ class TestDebugEventStream:
 
         payload = hub._hass.bus.payload(EVENT_DEBUG_DP)
         assert isinstance(payload["raw"], str)
+
+
+class TestStillUrlIsOnDemandOnly:
+    """B: a still URL returns the picture as it is *now*, so it only belongs to
+    on_demand. In buffer/warm a still URL left over from an earlier mode must not
+    be used behind the buffer's back; the fallback grabs from the stream instead.
+    """
+
+    def test_on_demand_passes_the_still_url_through(self, tmp_path):
+        hub = make_hub(tmp_path, options={
+            CONF_SNAPSHOT_MODE: video.MODE_ON_DEMAND,
+            CONF_STILL_IMAGE_URL_OVERRIDE: "http://cam/still.jpg",
+        })
+        provider = hub._build_snapshot_provider()
+        assert provider._config.still_url == "http://cam/still.jpg"
+
+    @pytest.mark.parametrize("mode", [video.MODE_BUFFER, video.MODE_WARM])
+    def test_recording_modes_never_receive_the_still_url(self, tmp_path, mode):
+        hub = make_hub(tmp_path, options={
+            CONF_SNAPSHOT_MODE: mode,
+            CONF_STILL_IMAGE_URL_OVERRIDE: "http://cam/still.jpg",
+        })
+        provider = hub._build_snapshot_provider()
+        assert provider._config.still_url is None
+
+
+class TestTestSnapshotButton:
+    """The 'Test snapshot' button: capture and show a picture without ringing.
+
+    Its whole reason to exist is validating snapshot settings without pressing
+    the doorbell, so the one thing it must never do is fire an event an
+    automation could be listening for.
+    """
+
+    @pytest.mark.asyncio
+    async def test_it_captures_stores_and_shows_without_firing_an_event(self, tmp_path):
+        provider = FakeProvider()
+        hub = make_hub(
+            tmp_path,
+            options={CONF_SNAPSHOT_PATH: str(tmp_path / "www" / "doorbell")},
+            provider=provider,
+        )
+        notified: list[str | None] = []
+        hub.on_snapshot_change(notified.append)
+
+        ok = await hub.async_capture_test_snapshot()
+
+        assert ok is True
+        assert Path(hub.last_snapshot_path).read_bytes() == JPEG
+        assert notified == [hub.last_snapshot_url]  # the image entity was poked
+        assert hub._hass.bus.events == []           # but nothing hit the bus
+
+    @pytest.mark.asyncio
+    async def test_it_reports_failure_when_no_image_comes_back(self, tmp_path):
+        provider = FakeProvider(image=None)
+        hub = make_hub(
+            tmp_path,
+            options={CONF_SNAPSHOT_PATH: str(tmp_path / "www" / "doorbell")},
+            provider=provider,
+        )
+        assert await hub.async_capture_test_snapshot() is False
+        assert hub._hass.bus.events == []
+
+    @pytest.mark.asyncio
+    async def test_it_does_not_even_grab_when_snapshots_are_unavailable(self, tmp_path):
+        provider = FakeProvider(available=False)
+        hub = make_hub(tmp_path, provider=provider)
+        assert await hub.async_capture_test_snapshot() is False
+        assert provider.grabs == []

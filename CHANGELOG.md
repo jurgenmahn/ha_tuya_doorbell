@@ -5,6 +5,27 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.3.0] - 2026-08-30
+
+### Added
+
+- A snapshot **image entity**. The picture taken when the doorbell fires used to
+  exist only as a file on disk and a URL in an attribute, with nothing to render
+  it. It now shows as an image entity -- on dashboards, in notifications, in the
+  logbook -- so the picture of who rang is actually visible.
+- A **Test snapshot** button. It runs the exact same grab-and-store path a
+  doorbell event would and updates the image entity, but fires no event, so the
+  snapshot configuration can be validated without pressing the bell or tripping
+  an automation.
+
+### Changed
+
+- The **still image URL** is now offered and used in the *on demand* mode only.
+  It returns the picture as it is now, so it never fitted the *buffer* mode (a
+  frame from the past) or *warm* mode (a pre-warmed stream); showing it there
+  invited setting a source that silently could not do what the mode promised. In
+  buffer/warm the fallback now grabs from the stream instead.
+
 ## [3.2.0] - 2026-08-30
 
 ### Added

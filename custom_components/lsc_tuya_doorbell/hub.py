@@ -1478,6 +1478,50 @@ class DeviceHub:
             )
         return file_path, url
 
+    async def async_capture_test_snapshot(self) -> bool:
+        """Take a snapshot now and show it, without firing any doorbell event.
+
+        This is the "does my snapshot configuration actually work" button: it
+        runs the exact same grab-and-store path an event would, updates the image
+        entity, but fires no button/motion/snapshot event -- so testing it does
+        not ring anything or trip an automation.
+        """
+        if not self._snapshots.available:
+            _LOGGER.warning(
+                "Test snapshot for %s skipped: %s",
+                self._device_name, self._snapshots.status,
+            )
+            return False
+
+        try:
+            image = await self._snapshots.async_grab()
+        except Exception:  # noqa: BLE001 - a test button must never raise into HA
+            _LOGGER.warning(
+                "Test snapshot for %s failed", self._device_name, exc_info=True
+            )
+            return False
+
+        if not image:
+            _LOGGER.warning(
+                "Test snapshot for %s produced no image: %s",
+                self._device_name, self._snapshots.status,
+            )
+            return False
+
+        stored = await self._async_store_snapshot(image)
+        if stored is None:
+            return False
+
+        file_path, url = stored
+        self._last_snapshot_path = file_path
+        self._last_snapshot_url = url
+        _LOGGER.info("Test snapshot saved: %s (url: %s)", file_path, url)
+        # Internal callback only -- this updates the image entity and the
+        # attribute, and is not a bus event, so no automation sees it.
+        self._notify_snapshot_callbacks(url)
+        return True
+
+
     def _schedule_record_recovery(self, dp_id: int) -> None:
         """Push the record switch back on after the device turned it off."""
         _LOGGER.warning(
@@ -1755,10 +1799,15 @@ class DeviceHub:
 
     def _build_snapshot_provider(self) -> video.SnapshotProvider:
         """Assemble the snapshot provider from the entry's configuration."""
+        mode = self._option(CONF_SNAPSHOT_MODE, video.DEFAULT_SNAPSHOT_MODE)
         config = video.SnapshotConfig(
-            mode=self._option(CONF_SNAPSHOT_MODE, video.DEFAULT_SNAPSHOT_MODE),
+            mode=mode,
             source_url=self._snapshot_source_url(),
-            still_url=self.still_image_url,
+            # The still URL is an "on demand" concept only: it returns the
+            # picture as it is now. In buffer/warm the fallback grabs from the
+            # stream instead, so a still URL left over from an earlier mode is
+            # not silently used behind the buffer's back.
+            still_url=self.still_image_url if mode == video.MODE_ON_DEMAND else None,
             buffer_path=self._option(
                 CONF_SNAPSHOT_BUFFER_PATH, video.DEFAULT_BUFFER_PATH
             ),
