@@ -1650,10 +1650,29 @@ class DeviceHub:
         self._last_clip_path = target
         self._last_clip_url = url
         _LOGGER.info("Clip saved: %s (url: %s)", target, url)
-        # Refresh only the clip listeners -- the image entity must not be poked,
-        # as it has no still to show and would render broken.
         self._notify_clip_callbacks(url)
+
+        # Also grab a poster frame from the same buffer, so the image entity
+        # shows what the clip holds -- visible confirmation that a clip was made,
+        # and a still that is genuinely present (not the broken picture an empty
+        # poke would leave).
+        await self._store_poster_frame()
         return True
+
+    async def _store_poster_frame(self) -> None:
+        """Grab one frame and show it in the image entity, best-effort."""
+        try:
+            image = await self._snapshots.async_grab()
+        except Exception:  # noqa: BLE001 - a poster is a nicety, never fatal
+            _LOGGER.debug("Poster frame grab failed", exc_info=True)
+            return
+        if not image:
+            return
+        stored = await self._async_store_snapshot(image)
+        if stored is None:
+            return
+        self._last_snapshot_path, self._last_snapshot_url = stored
+        self._notify_snapshot_callbacks(self._last_snapshot_url)
 
     async def _async_clip_for_event(self, payload: dict[str, Any]) -> None:
         """Write a buffer clip for an event that has already fired, and announce it."""

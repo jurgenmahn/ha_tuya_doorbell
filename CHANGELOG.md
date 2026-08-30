@@ -5,6 +5,17 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.8.0] - 2026-08-30
+
+### Changed
+
+- Clip mode now also captures a **poster frame** into the snapshot image entity
+  alongside the video. A clip has no native entity to display it, so the image
+  entity now shows a still from the same buffer -- visible confirmation that a
+  clip was made (the Test capture button in particular showed no visible result
+  before), while the video stays available at `last_clip_url` and via the
+  clip-ready event.
+
 ## [3.7.0] - 2026-08-30
 
 ### Fixed
