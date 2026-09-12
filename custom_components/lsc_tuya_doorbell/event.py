@@ -29,7 +29,7 @@ from .entity_meta import (
     event_definitions,
     event_type_for,
 )
-from .hub import DeviceHub
+from .hub import DeviceHub, extract_event_channel
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -89,13 +89,20 @@ class LscTuyaEvent(LscTuyaEntity, EventEntity):
         _LOGGER.debug(
             "Event DP %d: firing %s (value=%r)", self._dp_id, self._event_type, value
         )
-        self._trigger_event(
-            self._event_type,
-            {
-                "dp_id": self._dp_id,
-                "role": self._role,
-                "event_counter": self._hub.event_count(self._dp_id),
-                "snapshot_url": self._hub.last_snapshot_url,
-            },
-        )
+        attributes: dict[str, Any] = {
+            "dp_id": self._dp_id,
+            "role": self._role,
+            "event_counter": self._hub.event_count(self._dp_id),
+            "snapshot_url": self._hub.last_snapshot_url,
+        }
+        # Only when the device actually named one. A permanent null attribute on
+        # every single-channel doorbell is noise; on an intercom this is the
+        # only thing separating the building entrance from the front door.
+        channel, channel_name = extract_event_channel(value)
+        if channel is not None:
+            attributes["channel"] = channel
+            if channel_name:
+                attributes["channel_name"] = channel_name
+
+        self._trigger_event(self._event_type, attributes)
         self.async_write_ha_state()

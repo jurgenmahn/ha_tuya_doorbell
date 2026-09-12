@@ -192,6 +192,120 @@ def _to_int(value: Any) -> Any:
     return value
 
 
+# Where a multi-channel device says which of its channels raised an event.
+#
+# An apartment intercom answers the building entrance and the flat's own door
+# from one Tuya device, and both ring the same datapoint -- only the channel in
+# the payload separates them. Tuya's ipc_c_switch_channel carries
+#   {"res":1,"err":0,"cc":2,"chs":[{"id":1,"n":"DOOR1"},{"id":2,"n":"DOOR2"}]}
+# where "cc" is the channel that fired and "chs" names them all. The other
+# spellings are here because no two firmwares agree; a payload carrying none of
+# them is a single-channel device and reports no channel at all.
+_CHANNEL_KEYS = ("cc", "channel", "chn", "ch")
+_CHANNEL_LIST_KEYS = ("chs", "channels")
+_CHANNEL_ID_KEYS = ("id", "ch", "cid")
+_CHANNEL_NAME_KEYS = ("n", "name", "title")
+
+
+def decode_dp_object(value: Any) -> dict | None:
+    """Return the JSON object a datapoint carries, or None when it carries none.
+
+    Tuya sends these as a JSON string, sometimes base64-wrapped, and a raw
+    datapoint arrives as bytes. All three decode to the same object; anything
+    else is not one and must not be guessed at.
+    """
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, bytes):
+        try:
+            value = value.decode("utf-8")
+        except UnicodeDecodeError:
+            return None
+    if not isinstance(value, str):
+        return None
+
+    for candidate in (value.strip(), _base64_json_text(value.strip())):
+        if not candidate:
+            continue
+        try:
+            parsed = json.loads(candidate)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+    return None
+
+
+def _base64_json_text(text: str) -> str | None:
+    """The JSON hidden inside a base64 blob, when that is what the text is."""
+    if len(text) < 8:
+        return None
+    try:
+        decoded = base64.b64decode(text, validate=True).decode("utf-8")
+    except Exception:  # noqa: BLE001 - not base64, or not text; either way, no
+        return None
+    return decoded if decoded.lstrip().startswith("{") else None
+
+
+def _first_int(data: Mapping[str, Any], keys: tuple[str, ...]) -> int | None:
+    """The first of these keys that holds something countable."""
+    for key in keys:
+        if key not in data or isinstance(data[key], bool):
+            continue
+        try:
+            return int(data[key])
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _channel_name(data: Mapping[str, Any], channel: int) -> str | None:
+    """The name the device gave this channel, from the list it sends along."""
+    for key in _CHANNEL_LIST_KEYS:
+        entries = data.get(key)
+        if not isinstance(entries, list):
+            continue
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            if _first_int(entry, _CHANNEL_ID_KEYS) != channel:
+                continue
+            for name_key in _CHANNEL_NAME_KEYS:
+                name = entry.get(name_key)
+                if isinstance(name, str) and name:
+                    return name
+    return None
+
+
+def extract_event_channel(value: Any) -> tuple[int | None, str | None]:
+    """Which channel raised this event, and what the device calls it.
+
+    Returns (None, None) for everything that is not a multi-channel payload,
+    which is every single-channel doorbell -- the point is to add information
+    where there is some, never to invent a channel 1 where the device named
+    none.
+    """
+    data = decode_dp_object(value)
+    if data is None:
+        return None, None
+
+    scopes = [data]
+    inner = data.get("data")
+    if isinstance(inner, dict):
+        scopes.append(inner)
+
+    for scope in scopes:
+        channel = _first_int(scope, _CHANNEL_KEYS)
+        if channel is None:
+            continue
+        for name_scope in scopes:
+            name = _channel_name(name_scope, channel)
+            if name:
+                return channel, name
+        return channel, None
+    return None, None
+
+
 def local_url_for(file_path: str, www_root: str) -> str | None:
     """Return the /local/ URL for a file, or None when it has none.
 
@@ -1488,6 +1602,7 @@ class DeviceHub:
         field exists before reading it is an automation that breaks on the first
         event that leaves the field out.
         """
+        channel, channel_name = extract_event_channel(value)
         return {
             "device_id": self._device_id,
             "device_name": self._device_name,
@@ -1496,6 +1611,10 @@ class DeviceHub:
             "role": role,
             "event_counter": counter,
             "image_url": self.extract_image_url(value, definition),
+            # None on a single-channel doorbell, which is all of them until an
+            # intercom answers two doors from one device.
+            "channel": channel,
+            "channel_name": channel_name,
             "snapshot_url": None,
             "snapshot_path": None,
             "raw_value": (

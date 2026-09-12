@@ -5,6 +5,51 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.10.0] - 2026-09-13
+
+### Fixed
+
+- **Protocol 3.4 and 3.5 devices that connected and then immediately dropped the
+  session.** The session key negotiation completed, and the first frame sent
+  afterwards — a zero-length heartbeat — made the device close the socket within
+  milliseconds. It surfaced as *"the device accepted the connection but never
+  answered"*, which points at the local key, so the one thing that was certainly
+  correct is what people spent their time re-checking. Two changes, both of them
+  simply doing what tinytuya does:
+  - The status query on 3.4/3.5 is now `DP_QUERY_NEW` (`0x10`) with an empty
+    object, not the v3.3-shaped `DP_QUERY` (`0x0a`). It is the first thing those
+    devices expect after a key negotiation, and the frame is byte-identical in
+    size to the one a working tinytuya session sends.
+  - Heartbeats on 3.4/3.5 carry `{"gwId": …, "devId": …}` instead of going out
+    empty. v3.3 heartbeats are unchanged; they are empty on every device this
+    integration has been run against.
+  - Setup probes a device with a status query before a heartbeat, so the first
+    frame after the handshake is the one the device is waiting for. A device that
+    answers a query is now accepted whatever it does with heartbeats.
+
+  Reported with a Wireshark comparison against tinytuya in
+  [#23](https://github.com/jurgenmahn/ha_tuya_doorbell/issues/23), which is what
+  made the difference findable.
+- A local key containing a byte above `0x7f` no longer fails with a bare
+  `UnicodeEncodeError`. Keys are 16 arbitrary bytes rendered as text and are now
+  encoded as latin-1, the way tinytuya encodes them. Quotes, backslashes and
+  other punctuation were never a problem — nothing quotes or escapes the key —
+  but a high byte was.
+
+### Added
+
+- **`channel` and `channel_name` on every device event.** An apartment intercom
+  answers the building entrance and the flat's own door from one Tuya device,
+  and both ring the same datapoint — the channel in the payload is the only
+  thing that separates them. Where the device names one (Tuya's
+  `ipc_c_switch_channel` and anything else carrying `cc`/`channel`, including
+  base64-wrapped and nested payloads), it is now read out and placed in the
+  event. The event entity gets the same two values as attributes, but only when
+  there is a channel to report: `null` attributes on the single-channel
+  doorbells, which is all of them, would be noise.
+
+  Requested in [#24](https://github.com/jurgenmahn/ha_tuya_doorbell/issues/24).
+
 ## [3.9.0] - 2026-08-30
 
 ### Added

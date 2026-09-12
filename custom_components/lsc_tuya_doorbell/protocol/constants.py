@@ -100,6 +100,10 @@ class Command(IntEnum):
     HEARTBEAT = 9
     DP_QUERY = 10
     CONTROL_NEW = 13
+    # The status query v3.4 and v3.5 devices expect. They answer DP_QUERY on
+    # some firmwares and ignore it -- or drop the session -- on others, which
+    # is why the version decides the command rather than the other way round.
+    DP_QUERY_NEW = 16
     UPDATEDPS = 18
 
 
@@ -110,14 +114,14 @@ VERSION_HEADERS = {
     ProtocolVersion.V35: VERSION_35_HEADER,
 }
 
-# Commands that don't include payload
-NO_PAYLOAD_COMMANDS = {Command.HEARTBEAT}
-
 # Commands that don't get a protocol version header (v3.3 specific)
 NO_PROTOCOL_HEADER_CMDS = {
-    Command.DP_QUERY, Command.UPDATEDPS, Command.HEARTBEAT,
+    Command.DP_QUERY, Command.DP_QUERY_NEW, Command.UPDATEDPS, Command.HEARTBEAT,
     Command.SESS_KEY_NEG_START, Command.SESS_KEY_NEG_RESP, Command.SESS_KEY_NEG_FINISH,
 }
 
 # Commands that return data
-DATA_COMMANDS = {Command.STATUS, Command.DP_QUERY, Command.CONTROL, Command.UPDATEDPS, Command.CONTROL_NEW}
+DATA_COMMANDS = {
+    Command.STATUS, Command.DP_QUERY, Command.DP_QUERY_NEW, Command.CONTROL,
+    Command.UPDATEDPS, Command.CONTROL_NEW,
+}

@@ -418,8 +418,24 @@ that breaks an automation the first time it is left out:
 | `event_counter` | Running count for this datapoint since the entry was loaded |
 | `raw_value` | The reported value |
 | `image_url` | Tuya cloud image URL if the payload contained one, else `null` |
+| `channel` | Which video channel raised the event on a multi-channel intercom, else `null` |
+| `channel_name` | What the device calls that channel (e.g. `DOOR1`), else `null` |
 | `snapshot_url` | `/local/` URL of the stored picture. Always `null` on the first event; filled in on `snapshot_ready` |
 | `snapshot_path` | Absolute path of the stored picture, or `null` |
+
+`channel` is `null` on every ordinary doorbell and only fills in for the
+apartment intercoms that answer two doors from one Tuya device. Those report
+both doors on the same datapoint, and the channel in the payload is the only
+thing that separates the building entrance from the front door:
+
+```yaml
+  - trigger: event
+    event_type: lsc_tuya_doorbell_button_press
+    condition: "{{ trigger.event.data.channel == 2 }}"
+```
+
+The event entity carries the same two values as attributes, but only when the
+device actually named a channel.
 
 `dp_scan_results` and `dp_discovered` have their own shapes. In 2.x these two
 shared one event name with two different payloads, so an automation listening
@@ -582,6 +598,17 @@ Assistant shows a repair issue saying so; the fix is a
 [live capture](#finding-your-datapoints-with-live-capture).
 
 The log line to look for is `No datapoint claims the doorbell button role`.
+
+### A 3.4 or 3.5 device connects and then drops the session
+
+Fixed in 3.10.0. The session key negotiation succeeded, and the very next frame
+— an empty heartbeat — made the device close the socket, which came out as *the
+device accepted the connection but never answered* and sent people hunting for a
+wrong local key. Those devices are now asked for their status with command
+`0x10` first, the way tinytuya does, and their heartbeats carry a body.
+
+If it still happens, the log line to look for is `ReadLoop: connection closed by
+device (empty read)` immediately after `Session key negotiation complete`.
 
 ### Other problems
 

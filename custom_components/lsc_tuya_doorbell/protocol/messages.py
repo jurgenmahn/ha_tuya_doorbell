@@ -18,7 +18,6 @@ from .constants import (
     HMAC_SIZE,
     MAX_BUFFER_SIZE,
     MAX_PAYLOAD_LENGTH,
-    NO_PAYLOAD_COMMANDS,
     NO_PROTOCOL_HEADER_CMDS,
     PREFIX_55AA,
     PREFIX_6699,
@@ -179,9 +178,16 @@ class MessageCodec:
         return result
 
     @staticmethod
-    def _payload_bytes(command: int, payload: dict | str | bytes | None) -> bytes:
-        """Normalise a payload argument to the bytes that go on the wire."""
-        if command in NO_PAYLOAD_COMMANDS or payload is None:
+    def _payload_bytes(payload: dict | str | bytes | None) -> bytes:
+        """Normalise a payload argument to the bytes that go on the wire.
+
+        No payload means no bytes, whatever the command. This used to force a
+        heartbeat empty even when the caller supplied a body, which is wrong:
+        v3.4/v3.5 firmwares exist that close the session the moment a
+        zero-length heartbeat arrives, so the caller has to be able to say what
+        goes in one.
+        """
+        if payload is None:
             return b""
         if isinstance(payload, bytes):
             return payload
@@ -204,7 +210,7 @@ class MessageCodec:
               then encrypt everything.
         No retcode in outgoing packets (retcode is only in device responses).
         """
-        payload_bytes = self._payload_bytes(command, payload)
+        payload_bytes = self._payload_bytes(payload)
 
         if payload_bytes:
             key = self._session_key if self._version == ProtocolVersion.V34 and self._session_key else None
@@ -254,7 +260,7 @@ class MessageCodec:
         prefix are the GCM additional authenticated data, so a tampered header
         fails the tag check.
         """
-        payload_bytes = self._payload_bytes(command, payload)
+        payload_bytes = self._payload_bytes(payload)
         if command not in NO_PROTOCOL_HEADER_CMDS:
             payload_bytes = self._version_header + payload_bytes
 

@@ -832,11 +832,18 @@ class LscTuyaDoorbellConfigFlow(ConfigFlow, domain=DOMAIN):
             )
             try:
                 await conn.connect()
-                if not await conn.heartbeat():
-                    _LOGGER.debug("Protocol %s: no heartbeat response", version)
+                # Query first, heartbeat second. The status query is the first
+                # thing a v3.4/v3.5 device is asked for after a session key
+                # negotiation, and at least one firmware closes the connection
+                # when a heartbeat arrives before it. A device that answers a
+                # query is reachable regardless of what it does with heartbeats.
+                if not await conn.query_dps() and not await conn.heartbeat():
+                    _LOGGER.debug(
+                        "Protocol %s: no answer to either a status query or a "
+                        "heartbeat", version,
+                    )
                     failures.append("heartbeat_failed")
                     continue
-                await conn.query_dps()
             except Exception as err:  # noqa: BLE001 - mapped to a user-facing cause
                 key = error_key_for(err)
                 if key == "unknown":

@@ -58,7 +58,9 @@ from custom_components.lsc_tuya_doorbell.dp_registry import (
 )
 from custom_components.lsc_tuya_doorbell.hub import (
     DeviceHub,
+    decode_dp_object,
     device_name_slug,
+    extract_event_channel,
     local_url_for,
     normalize_dp_value,
     snapshot_filename,
@@ -1621,3 +1623,94 @@ class TestClipShowsAPosterFrame:
         assert hub.last_snapshot_url is not None
         assert snapshot_pokes == [hub.last_snapshot_url]
         assert provider.clips == [hub.last_clip_path]
+
+
+# --------------------------------------------------------------------------
+# Multi-channel intercoms (issue #24)
+#
+# An apartment intercom answers the building entrance and the flat's own door
+# from one Tuya device. Both ring the same datapoint; only the channel in the
+# payload separates them.
+# --------------------------------------------------------------------------
+
+NOVICAM_CHANNEL_PAYLOAD = json.dumps(
+    {
+        "res": 1,
+        "err": 0,
+        "cc": 2,
+        "chs": [{"id": 1, "n": "DOOR1"}, {"id": 2, "n": "DOOR2"}],
+    }
+)
+
+
+class TestChannelExtraction:
+    def test_the_active_channel_and_its_name_are_read(self):
+        assert extract_event_channel(NOVICAM_CHANNEL_PAYLOAD) == (2, "DOOR2")
+
+    def test_a_dict_works_as_well_as_a_string(self):
+        assert extract_event_channel(json.loads(NOVICAM_CHANNEL_PAYLOAD)) == (
+            2, "DOOR2",
+        )
+
+    def test_a_raw_datapoint_arrives_as_bytes(self):
+        assert extract_event_channel(NOVICAM_CHANNEL_PAYLOAD.encode()) == (2, "DOOR2")
+
+    def test_base64_wrapped_json_is_unwrapped(self):
+        import base64 as b64
+
+        wrapped = b64.b64encode(NOVICAM_CHANNEL_PAYLOAD.encode()).decode()
+        assert extract_event_channel(wrapped) == (2, "DOOR2")
+
+    def test_a_channel_without_a_name_still_reports_its_number(self):
+        assert extract_event_channel(json.dumps({"cc": 1})) == (1, None)
+
+    def test_a_nested_channel_is_found(self):
+        payload = json.dumps({"cmd": "ipc_doorbell", "data": {"channel": 3}})
+        assert extract_event_channel(payload) == (3, None)
+
+    def test_a_single_channel_doorbell_reports_no_channel(self):
+        """No channel is invented for the devices that have only one."""
+        payload = json.dumps(
+            {"cmd": "ipc_doorbell", "data": {"imgUrl": "https://example.com/a.jpg"}}
+        )
+        assert extract_event_channel(payload) == (None, None)
+
+    @pytest.mark.parametrize(
+        "value", ["", "not json", b"\x00\x01\x02", 42, None, "[1,2,3]"]
+    )
+    def test_anything_that_is_not_an_object_is_ignored(self, value):
+        assert extract_event_channel(value) == (None, None)
+
+    def test_a_boolean_is_not_a_channel_number(self):
+        assert extract_event_channel(json.dumps({"channel": True})) == (None, None)
+
+    def test_decode_dp_object_refuses_a_list(self):
+        assert decode_dp_object("[1, 2]") is None
+
+
+class TestChannelReachesTheEvent:
+    @pytest.mark.asyncio
+    async def test_the_press_event_names_the_channel(self, tmp_path):
+        hub = make_hub(
+            tmp_path, profile=doorbell_profile(doorbell_button=DOORBELL_DP)
+        )
+        hub._handle_status_update({str(DOORBELL_DP): NOVICAM_CHANNEL_PAYLOAD})
+
+        payload = hub._hass.bus.payload(EVENT_BUTTON_PRESS)
+        assert payload["channel"] == 2
+        assert payload["channel_name"] == "DOOR2"
+        await hub._config_entry.wait()
+
+    @pytest.mark.asyncio
+    async def test_the_keys_are_present_even_on_a_single_channel_doorbell(
+        self, tmp_path
+    ):
+        hub = make_hub(
+            tmp_path, profile=doorbell_profile(doorbell_button=DOORBELL_DP)
+        )
+        hub._handle_status_update({str(DOORBELL_DP): "x"})
+
+        payload = hub._hass.bus.payload(EVENT_BUTTON_PRESS)
+        assert payload["channel"] is None
+        assert payload["channel_name"] is None
+        await hub._config_entry.wait()

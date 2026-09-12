@@ -490,6 +490,10 @@ class _FakeConnection:
     """Records which protocol versions were tried, and fails all but one."""
 
     attempts: list[str] = []
+    #: What the device does with each probe. Overridden per test.
+    heartbeat_answers = True
+    query_answers: dict | None = None
+    calls: list[str] = []
 
     def __init__(self, host, port, device_id, local_key, version):
         self.version = version
@@ -500,20 +504,22 @@ class _FakeConnection:
             raise self.failure
 
     async def heartbeat(self):
-        return True
+        type(self).calls.append("heartbeat")
+        return self.heartbeat_answers
 
     async def query_dps(self):
-        return {}
+        type(self).calls.append("query_dps")
+        return dict(self.query_answers or {})
 
     async def disconnect(self):
         return None
 
 
-def _connection_factory(works, failure):
+def _connection_factory(works, failure, **behaviour):
     return type(
         "Connection",
         (_FakeConnection,),
-        {"attempts": [], "works": works, "failure": failure},
+        {"attempts": [], "calls": [], "works": works, "failure": failure, **behaviour},
     )
 
 
@@ -543,6 +549,52 @@ class TestConnectionTest:
 
         assert version is None
         assert error == "invalid_local_key"
+
+    @pytest.mark.asyncio
+    async def test_the_status_query_goes_first(self, monkeypatch):
+        """A v3.5 firmware drops the session on a heartbeat sent before a query."""
+        connection = _connection_factory(
+            {"3.3"}, ConnectionError("nope"), query_answers={"101": True}
+        )
+        monkeypatch.setattr(config_flow, "TuyaConnection", connection)
+
+        flow = config_flow.LscTuyaDoorbellConfigFlow()
+        flow._version = "3.3"
+        version, error = await flow._async_test_connection()
+
+        assert (version, error) == ("3.3", None)
+        assert connection.calls == ["query_dps"], (
+            "a device that answered a query must not also be heartbeated"
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_device_that_only_answers_heartbeats_still_passes(
+        self, monkeypatch
+    ):
+        connection = _connection_factory({"3.3"}, ConnectionError("nope"))
+        monkeypatch.setattr(config_flow, "TuyaConnection", connection)
+
+        flow = config_flow.LscTuyaDoorbellConfigFlow()
+        flow._version = "3.3"
+        version, error = await flow._async_test_connection()
+
+        assert (version, error) == ("3.3", None)
+        assert connection.calls == ["query_dps", "heartbeat"]
+
+    @pytest.mark.asyncio
+    async def test_a_silent_device_is_reported_as_such(self, monkeypatch):
+        connection = _connection_factory(
+            set(config_flow.SUPPORTED_PROTOCOL_VERSIONS),
+            ConnectionError("nope"),
+            heartbeat_answers=False,
+        )
+        monkeypatch.setattr(config_flow, "TuyaConnection", connection)
+
+        flow = config_flow.LscTuyaDoorbellConfigFlow()
+        version, error = await flow._async_test_connection()
+
+        assert version is None
+        assert error == "heartbeat_failed"
 
     @pytest.mark.asyncio
     async def test_an_unreachable_device_still_says_cannot_connect(self, monkeypatch):

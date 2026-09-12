@@ -70,7 +70,13 @@ class TuyaConnection:
         self._port = port
         self._device_id = device_id
         self._local_key = local_key
-        self._local_key_bytes = local_key.encode("ascii") if isinstance(local_key, str) else local_key
+        # latin-1, not ascii: Tuya keys are 16 arbitrary bytes rendered as text,
+        # and a key containing a byte above 0x7f used to raise UnicodeEncodeError
+        # here -- surfacing as "unknown error" instead of anything actionable.
+        # tinytuya encodes them the same way.
+        self._local_key_bytes = (
+            local_key.encode("latin-1") if isinstance(local_key, str) else local_key
+        )
         self._version = ProtocolVersion.parse(version)
         self._codec = MessageCodec(version, self._local_key_bytes)
         self._cipher = TuyaCipher(self._local_key_bytes)
@@ -320,14 +326,17 @@ class TuyaConnection:
         command: int,
         payload: dict | str | bytes | None = None,
         timeout: float = RESPONSE_TIMEOUT,
+        match_commands: tuple[int, ...] | None = None,
     ) -> TuyaMessage:
         """Send a command and wait for the response.
 
         Matches the response by sequence number first, and falls back to the
-        command type for devices that answer with seqno 0.
+        command type for devices that answer with seqno 0. `match_commands`
+        widens that fallback for the commands a device may answer under a
+        different number than it was asked.
         """
         seqno = await self.send(command, payload)
-        req = self._register_request(command, seqno, (command,))
+        req = self._register_request(command, seqno, match_commands or (command,))
 
         _LOGGER.debug(
             "SendAndWait: waiting for response cmd=%d seqno=%d timeout=%.1fs",
@@ -346,11 +355,30 @@ class TuyaConnection:
         finally:
             self._unregister_request(req)
 
+    def _heartbeat_payload(self) -> dict[str, str] | None:
+        """What a heartbeat carries, which depends on the protocol version.
+
+        v3.3 heartbeats go out empty and every device this integration was
+        written against answers them, so that stays as it is. v3.4 and v3.5 are
+        a different story: a device exists that closes the session within
+        milliseconds of receiving a zero-length heartbeat right after the key
+        negotiation, and the same device is perfectly happy with the body
+        tinytuya sends on every version. Send that body where an empty one is
+        known to be fatal.
+        """
+        if self._version == ProtocolVersion.V33:
+            return None
+        return {"gwId": self._device_id, "devId": self._device_id}
+
     async def heartbeat(self) -> bool:
         """Send a heartbeat and wait for response. Returns True if successful."""
         _LOGGER.debug("Heartbeat: sending to %s:%s", self._host, self._port)
         try:
-            msg = await self.send_and_wait(Command.HEARTBEAT, timeout=RESPONSE_TIMEOUT)
+            msg = await self.send_and_wait(
+                Command.HEARTBEAT,
+                self._heartbeat_payload(),
+                timeout=RESPONSE_TIMEOUT,
+            )
             ok = msg.command == Command.HEARTBEAT
             if not ok:
                 _LOGGER.debug("Heartbeat: unexpected response cmd=%d", msg.command)
@@ -364,6 +392,9 @@ class TuyaConnection:
     ) -> dict:
         """Query datapoint values from the device.
 
+        v3.4 and v3.5 get DP_QUERY_NEW (0x10), which is what those devices
+        expect and what tinytuya sends; see `_query_dps_new`.
+
         device22 (22-char IDs) use CONTROL_NEW instead of DP_QUERY and require
         a dps dict in the payload with the requested DP IDs set to None.
         The device22 responds with an empty ack, then sends DPS data as
@@ -374,6 +405,17 @@ class TuyaConnection:
             max_retries: Number of attempts for device22 STATUS wait.
                 Use 1 during DP scanning to avoid overloading the device.
         """
+        if self._version in (ProtocolVersion.V34, ProtocolVersion.V35):
+            dps = await self._query_dps_new(dp_ids)
+            if dps or not self._is_device22:
+                return dps
+            # A 22-character ID is a hint, not a fact: it is how the v3.3-era
+            # workaround recognised the devices that only answer CONTROL_NEW.
+            # Try that shape too rather than reporting nothing.
+            _LOGGER.debug(
+                "QueryDPS: DP_QUERY_NEW returned nothing, retrying as device22"
+            )
+
         if self._is_device22:
             payload: dict[str, Any] = {
                 "devId": self._device_id,
@@ -403,6 +445,37 @@ class TuyaConnection:
         except (TimeoutError, ConnectionError) as err:
             _LOGGER.debug("DP query failed: %s", err)
             return {}
+
+    async def _query_dps_new(self, dp_ids: list[int] | None) -> dict:
+        """Ask a v3.4/v3.5 device for its datapoints with DP_QUERY_NEW (0x10).
+
+        The v3.3-shaped DP_QUERY, with gwId/devId/uid/t in the body, is not what
+        these devices are asked for after a session key negotiation. tinytuya
+        sends command 0x10 with an empty object, and a device that ignores our
+        DP_QUERY answers that immediately.
+
+        The reply may come back under DP_QUERY_NEW or under DP_QUERY depending
+        on the firmware, so both are accepted. A STATUS push is deliberately not
+        accepted here: it is how the device reports a doorbell press, and
+        stealing one to answer a query would drop the event.
+        """
+        payload: dict[str, Any] = {}
+        if dp_ids:
+            payload["dps"] = {str(dp): None for dp in dp_ids}
+
+        _LOGGER.debug("QueryDPS: protocol %s, using DP_QUERY_NEW, dp_ids=%s",
+                      self._version, dp_ids)
+        try:
+            msg = await self.send_and_wait(
+                Command.DP_QUERY_NEW,
+                payload,
+                timeout=RESPONSE_TIMEOUT,
+                match_commands=(Command.DP_QUERY_NEW, Command.DP_QUERY),
+            )
+        except (TimeoutError, ConnectionError) as err:
+            _LOGGER.debug("DP query (0x10) failed: %s", err)
+            return {}
+        return msg.data.get("dps", {})
 
     async def _query_dps_device22(
         self, cmd: int, payload: dict[str, Any], max_retries: int
@@ -649,7 +722,7 @@ class TuyaConnection:
 
         if msg.command in (
             Command.STATUS, Command.CONTROL, Command.CONTROL_NEW,
-            Command.UPDATEDPS, Command.DP_QUERY,
+            Command.UPDATEDPS, Command.DP_QUERY, Command.DP_QUERY_NEW,
         ):
             dps = msg.data.get("dps", {})
             if dps:
