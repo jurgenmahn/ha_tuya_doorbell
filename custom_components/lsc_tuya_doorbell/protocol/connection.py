@@ -599,12 +599,19 @@ class TuyaConnection:
         else:
             session_key = self._cipher.derive_session_key_v34(client_nonce, device_nonce)
 
-        self._codec.session_key = session_key
-
+        # The confirmation is signed with the *local* key and the frame itself
+        # still goes out under the local key: the device has not yet seen us
+        # switch, and cannot verify a MAC made with the derived session key. It
+        # answers a session-key-signed FINISH by closing the socket. tinytuya
+        # sends hmac(local_key, device_nonce) and only then switches keys, so
+        # the codec is moved over after the frame has been written.
+        #
         # The device does not answer this; the read loop picks up whatever it
         # sends next. Reading here would swallow the first status push.
-        confirm_hmac = TuyaCipher.calc_hmac(session_key, device_nonce)
+        confirm_hmac = TuyaCipher.calc_hmac(self._local_key_bytes, device_nonce)
         await self._write_raw(Command.SESS_KEY_NEG_FINISH, confirm_hmac)
+
+        self._codec.session_key = session_key
 
         _LOGGER.debug("Session key negotiation complete for %s", self._device_id)
 

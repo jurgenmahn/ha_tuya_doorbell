@@ -5,6 +5,30 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.10.1] - 2026-09-13
+
+### Fixed
+
+- **Protocol 3.4 and 3.5 devices that still dropped the session right after the
+  key negotiation.** The `SESS_KEY_NEG_FINISH` confirmation was signed with the
+  freshly derived session key and sent under it. At that point the device has
+  not seen us switch keys and cannot verify such a MAC, so a device that checks
+  it answers by closing the socket — milliseconds after a handshake the log
+  reports as complete. The confirmation now carries
+  `HMAC-SHA256(local_key, device_nonce)` and the frame goes out under the local
+  key; the codec moves to the session key only once it has been written, which
+  is the order tinytuya uses.
+
+  This is the same symptom as the 3.10.0 fix and a second, independent cause of
+  it: 3.10.0 corrected the *first command after* the handshake, this corrects
+  the *last frame of* the handshake. Devices that never verified the
+  confirmation were unaffected by this one, which is why the earlier fix was
+  enough for some and not for others.
+
+  Root-caused by [@zabique](https://github.com/zabique) on an LSC 1296P BT
+  doorbell in [#23](https://github.com/jurgenmahn/ha_tuya_doorbell/issues/23),
+  down to the diff.
+
 ## [3.10.0] - 2026-09-13
 
 ### Fixed

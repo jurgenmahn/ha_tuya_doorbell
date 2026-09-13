@@ -293,6 +293,41 @@ class TestSessionKeyNegotiation:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("version", ["3.4", "3.5"])
+    async def test_finish_frame_is_signed_with_the_local_key(self, version: str) -> None:
+        """The FINISH confirmation goes out under the local key, not the session key.
+
+        A device that verifies it — issue #23 — closes the socket milliseconds
+        after a FINISH signed with the derived session key, because it has not
+        seen us switch keys yet. tinytuya sends hmac(local_key, device_nonce)
+        and switches only afterwards.
+        """
+        from custom_components.lsc_tuya_doorbell.protocol.encryption import TuyaCipher
+
+        local_key = b"0123456789abcdef"
+        client_nonce = b"client_nonce_abc"
+        device_nonce = b"device_nonce_abc"
+        conn = TuyaConnection("127.0.0.1", 6668, "test", "0123456789abcdef", version)
+        reader, writer, written = make_streams(
+            [self._neg_response(local_key, client_nonce, version)]
+        )
+
+        with patch.object(TuyaCipher, "generate_nonce", return_value=client_nonce):
+            with patch("asyncio.open_connection", return_value=(reader, writer)):
+                await conn.connect()
+
+        # A codec that only knows the local key must be able to decode the
+        # FINISH frame; that is exactly what the device has at this point.
+        codec = MessageCodec(version, local_key)
+        finish = codec.decode(written[1])
+        assert finish.command == Command.SESS_KEY_NEG_FINISH
+        assert finish.payload == TuyaCipher.calc_hmac(local_key, device_nonce)
+        # The codec only moves to the session key after that frame went out.
+        assert conn._codec.session_key is not None
+        assert conn._codec.session_key != local_key
+        await conn.disconnect()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("version", ["3.4", "3.5"])
     async def test_truncated_negotiation_response_is_rejected(self, version: str) -> None:
         """A short body must not be accepted as a valid device nonce."""
         from custom_components.lsc_tuya_doorbell.protocol.constants import (
