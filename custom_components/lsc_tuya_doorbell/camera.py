@@ -95,11 +95,13 @@ class LscTuyaCamera(Camera):
     async def async_camera_image(
         self, width: int | None = None, height: int | None = None
     ) -> bytes | None:
-        """Return the newest frame from the shared snapshot provider.
+        """Return a recent frame from the shared snapshot provider.
 
         The camera used to fetch a still URL and, when that failed, start its
         own ffmpeg per thumbnail refresh: 5.9 s for a single grab and 15.9 s
         when a second one followed shortly after, with no backoff between the
-        failures. The provider keeps one warm source and one grab at a time.
+        failures. The provider keeps one warm source and one grab at a time,
+        and where a grab costs an ffmpeg it reuses a thumbnail for up to
+        ``video.CAMERA_FRAME_TTL`` seconds instead of taking one per refresh.
         """
-        return await self._hub.snapshots.async_grab()
+        return await self._hub.snapshots.async_camera_frame()

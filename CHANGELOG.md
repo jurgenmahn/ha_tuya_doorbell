@@ -5,6 +5,26 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **ffmpeg's thread counts are pinned** in every command that decodes. Left
+  alone, ffmpeg sizes its decoder, filter and encoder thread pools by core
+  count, and each thread holds full-size frames of its own. Measured at 1296p
+  on a 10-core host: an on-demand grab 192 → 58 MiB, a buffer grab 199 → 76
+  MiB, warm mode 363 → 103 MiB. One-shot grabs decode on one thread; warm mode
+  keeps two, so continuous decoding of the main stream stays ahead of real
+  time on a Pi-class CPU. The `-c copy` recorder and clip commands decode
+  nothing and are unchanged.
+- **The camera thumbnail is reused for up to 20 seconds** where taking one
+  costs an ffmpeg (`on_demand`, `buffer`, `clip`). The frontend refreshes a
+  camera card every 10 s from every open dashboard, and in `on_demand` each
+  refresh started a ~6 s grab of its own; a second viewer queued a second grab
+  behind it. Concurrent requests now share one grab. In `warm` mode the
+  thumbnail is still read fresh each time, since that is a file read. The
+  doorbell snapshot is never cached.
+
 ## [3.10.1] - 2026-09-13
 
 ### Fixed

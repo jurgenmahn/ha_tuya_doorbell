@@ -23,6 +23,7 @@ from custom_components.lsc_tuya_doorbell.video import (
     MODE_ON_DEMAND,
     MODE_WARM,
     RESTART_BACKOFF,
+    FrameCache,
     Segment,
     SnapshotConfig,
     SnapshotProvider,
@@ -890,6 +891,293 @@ class TestGrab:
         assert "no still image URL and no stream source" in caplog.text
 
 
+# --- ffmpeg thread counts --------------------------------------------------
+
+
+def _input_option(args: list[str], option: str) -> str | None:
+    """The value of ``option`` where it applies to the input (before -i)."""
+    head = args[: args.index("-i")]
+    return head[head.index(option) + 1] if option in head else None
+
+
+def _output_option(args: list[str], option: str) -> str | None:
+    """The value of ``option`` where it applies to the output (after -i)."""
+    tail = args[args.index("-i") + 1 :]
+    return tail[tail.index(option) + 1] if option in tail else None
+
+
+class TestThreadPinning:
+    """ffmpeg sizes its decoder, filter and encoder thread pools by core count,
+    and every thread holds full-size frames of its own. Measured at 1296p on a
+    10-core host: a buffer grab peaked at 199 MiB left alone and 76 MiB pinned;
+    warm mode at 363 MiB against 103 MiB. A decoding command line that leaves
+    the count to ffmpeg brings that back."""
+
+    @pytest.mark.asyncio
+    async def test_live_grab_decodes_and_encodes_on_one_thread(self, tmp_path):
+        spawn = FakeSpawn(factory=lambda _i: FakeProcess(stdout=JPEG))
+        provider, _, _, _ = make_provider(tmp_path, mode=MODE_ON_DEMAND, spawn=spawn)
+        await provider.async_start()
+
+        assert await provider.async_grab() == JPEG
+
+        assert _input_option(spawn.last, "-threads") == "1"
+        assert _input_option(spawn.last, "-filter_threads") == "1"
+        assert _output_option(spawn.last, "-threads") == "1"
+
+    @pytest.mark.asyncio
+    async def test_buffer_grab_decodes_and_encodes_on_one_thread(self, tmp_path):
+        clock = FakeClock(1_000_000.0)
+        spawn = FakeSpawn(factory=lambda _i: FakeProcess(stdout=JPEG))
+        provider, _, _, _ = make_provider(
+            tmp_path, mode=MODE_BUFFER, clock=clock, spawn=spawn
+        )
+        provider._active_mode = MODE_BUFFER
+        buffer_dir = tmp_path / "buffer"
+        buffer_dir.mkdir()
+        (buffer_dir / f"{int(clock.now) - 4}.ts").write_bytes(b"x" * 100)
+
+        assert await provider.async_grab(2.0) == JPEG
+
+        assert _input_option(spawn.last, "-threads") == "1"
+        assert _input_option(spawn.last, "-filter_threads") == "1"
+        assert _output_option(spawn.last, "-threads") == "1"
+
+    @pytest.mark.asyncio
+    async def test_warm_decodes_on_two_threads_and_encodes_on_one(self, tmp_path):
+        # Warm decodes every frame of the main stream for as long as it runs;
+        # one thread is borderline for 1296p on a Pi-class CPU, two keeps up.
+        provider, spawn, _, _ = make_provider(
+            tmp_path,
+            mode=MODE_WARM,
+            spawn=FakeSpawn(factory=lambda _i: FakeProcess(hang=True)),
+        )
+        await provider.async_start()
+        await asyncio.sleep(0)
+
+        writer = spawn.calls[0]
+        assert _input_option(writer, "-threads") == "2"
+        assert _input_option(writer, "-filter_threads") == "1"
+        assert _output_option(writer, "-threads") == "1"
+        await provider.async_stop()
+
+
+# --- Camera thumbnails -----------------------------------------------------
+
+
+class TestFrameCache:
+    """Dashboards ask for a camera thumbnail every 10 s, from every open view.
+
+    In the ffmpeg modes each request used to start a grab of its own, ~100 MiB
+    for ~6 s in on_demand; a second viewer queued a second one behind it.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_fresh_frame_is_served_without_grabbing_again(self):
+        clock = FakeClock()
+        cache = FrameCache(clock)
+        grabs = 0
+
+        async def grab():
+            nonlocal grabs
+            grabs += 1
+            return JPEG
+
+        assert await cache.get(grab, 20.0) == JPEG
+        clock.advance(19.0)
+        assert await cache.get(grab, 20.0) == JPEG
+        assert grabs == 1
+
+    @pytest.mark.asyncio
+    async def test_an_expired_frame_is_grabbed_again(self):
+        clock = FakeClock()
+        cache = FrameCache(clock)
+        frames = [b"\xff\xd8old\xff\xd9", b"\xff\xd8new\xff\xd9"]
+
+        async def grab():
+            return frames.pop(0)
+
+        await cache.get(grab, 20.0)
+        clock.advance(20.0)
+        assert await cache.get(grab, 20.0) == b"\xff\xd8new\xff\xd9"
+
+    @pytest.mark.asyncio
+    async def test_the_age_counts_from_when_the_frame_arrived(self):
+        # An on-demand grab takes ~6 s; counting from its start would throw
+        # the frame away 6 s early and grab again on the very next refresh.
+        clock = FakeClock()
+        cache = FrameCache(clock)
+        grabs = 0
+
+        async def slow_grab():
+            nonlocal grabs
+            grabs += 1
+            clock.advance(6.0)
+            return JPEG
+
+        await cache.get(slow_grab, 20.0)
+        clock.advance(19.0)  # 25 s after the grab started, 19 s after it ended
+        await cache.get(slow_grab, 20.0)
+        assert grabs == 1
+
+    @pytest.mark.asyncio
+    async def test_a_clock_that_went_backwards_does_not_freeze_the_frame(self):
+        clock = FakeClock()
+        cache = FrameCache(clock)
+        grabs = 0
+
+        async def grab():
+            nonlocal grabs
+            grabs += 1
+            return JPEG
+
+        await cache.get(grab, 20.0)
+        clock.advance(-3600.0)  # NTP correction; the frame did not get younger
+        await cache.get(grab, 20.0)
+        assert grabs == 2
+
+    @pytest.mark.asyncio
+    async def test_concurrent_requests_share_one_grab(self):
+        cache = FrameCache(FakeClock())
+        release = asyncio.Event()
+        grabs = 0
+
+        async def grab():
+            nonlocal grabs
+            grabs += 1
+            await release.wait()
+            return JPEG
+
+        requests = [asyncio.create_task(cache.get(grab, 20.0)) for _ in range(3)]
+        await asyncio.sleep(0)
+        release.set()
+
+        assert await asyncio.gather(*requests) == [JPEG, JPEG, JPEG]
+        assert grabs == 1
+
+    @pytest.mark.asyncio
+    async def test_a_failed_grab_is_not_kept(self):
+        cache = FrameCache(FakeClock())
+        results = [None, JPEG]
+
+        async def grab():
+            return results.pop(0)
+
+        assert await cache.get(grab, 20.0) is None
+        # No time has passed; a failure must not stand in for a picture.
+        assert await cache.get(grab, 20.0) == JPEG
+
+    @pytest.mark.asyncio
+    async def test_requests_queued_behind_a_failed_grab_do_not_each_retry(self):
+        # With the camera unreachable, each retry is a 15 s ffmpeg timeout.
+        cache = FrameCache(FakeClock())
+        release = asyncio.Event()
+        grabs = 0
+
+        async def grab():
+            nonlocal grabs
+            grabs += 1
+            await release.wait()
+            return None
+
+        requests = [asyncio.create_task(cache.get(grab, 20.0)) for _ in range(3)]
+        await asyncio.sleep(0)
+        release.set()
+
+        assert await asyncio.gather(*requests) == [None, None, None]
+        assert grabs == 1
+
+    @pytest.mark.asyncio
+    async def test_a_cancelled_grab_leaves_the_next_request_to_try(self):
+        # Home Assistant gives up on a thumbnail after 10 s. That says nothing
+        # about the camera, so whoever queued behind it grabs for themselves.
+        cache = FrameCache(FakeClock())
+        started = asyncio.Event()
+        grabs = 0
+
+        async def grab():
+            nonlocal grabs
+            grabs += 1
+            if grabs == 1:
+                started.set()
+                await asyncio.Event().wait()
+            return JPEG
+
+        first = asyncio.create_task(cache.get(grab, 20.0))
+        await asyncio.wait_for(started.wait(), 1.0)
+        second = asyncio.create_task(cache.get(grab, 20.0))
+        await asyncio.sleep(0)
+        first.cancel()
+
+        assert await asyncio.wait_for(second, 1.0) == JPEG
+        assert grabs == 2
+        with pytest.raises(asyncio.CancelledError):
+            await first
+
+
+class TestCameraFrame:
+    """The camera entity's thumbnail, cached where a grab costs an ffmpeg."""
+
+    @pytest.mark.asyncio
+    async def test_on_demand_thumbnails_reuse_one_grab_across_a_refresh(self, tmp_path):
+        clock = FakeClock()
+        spawn = FakeSpawn(factory=lambda _i: FakeProcess(stdout=JPEG))
+        provider, _, _, _ = make_provider(
+            tmp_path, mode=MODE_ON_DEMAND, clock=clock, spawn=spawn
+        )
+        await provider.async_start()
+
+        assert await provider.async_camera_frame() == JPEG
+        clock.advance(10.0)  # the frontend's refresh interval
+        assert await provider.async_camera_frame() == JPEG
+
+        assert len(spawn.calls) == 1
+
+    @pytest.mark.asyncio
+    async def test_buffer_thumbnails_reuse_one_grab_across_a_refresh(self, tmp_path):
+        clock = FakeClock(1_000_000.0)
+        spawn = FakeSpawn(factory=lambda _i: FakeProcess(stdout=JPEG))
+        provider, _, _, _ = make_provider(
+            tmp_path, mode=MODE_BUFFER, clock=clock, spawn=spawn
+        )
+        provider._active_mode = MODE_BUFFER
+        buffer_dir = tmp_path / "buffer"
+        buffer_dir.mkdir()
+        (buffer_dir / f"{int(clock.now) - 4}.ts").write_bytes(b"x" * 100)
+
+        assert await provider.async_camera_frame() == JPEG
+        clock.advance(10.0)
+        assert await provider.async_camera_frame() == JPEG
+
+        assert len(spawn.calls) == 1
+
+    @pytest.mark.asyncio
+    async def test_warm_thumbnails_follow_the_rolling_jpeg(self, tmp_path):
+        # Warm reads a file ffmpeg rewrites every second. Caching it would only
+        # make the thumbnail older and save nothing.
+        clock = FakeClock()
+        provider, _, _, _ = make_provider(
+            tmp_path,
+            mode=MODE_WARM,
+            clock=clock,
+            spawn=FakeSpawn(factory=lambda _i: FakeProcess(hang=True)),
+        )
+        await provider.async_start()
+        await asyncio.sleep(0)
+        warm_file = tmp_path / "buffer" / "latest.jpg"
+        first, second = b"\xff\xd8one\xff\xd9", b"\xff\xd8two\xff\xd9"
+
+        warm_file.write_bytes(first)
+        os.utime(warm_file, (clock.now, clock.now))
+        assert await provider.async_camera_frame() == first
+
+        clock.advance(10.0)
+        warm_file.write_bytes(second)
+        os.utime(warm_file, (clock.now, clock.now))
+        assert await provider.async_camera_frame() == second
+        await provider.async_stop()
+
+
 # --- One end-to-end check with the real binary -----------------------------
 
 
@@ -986,6 +1274,32 @@ class TestAgainstRealFfmpeg:
         assert is_jpeg(early) and is_jpeg(late)
         # testsrc counts up on screen, so a real seek changes the image.
         assert early != late
+
+    def test_ffmpeg_accepts_the_live_grab_command_line(self, tmp_path):
+        """The thread options sit in front of the input, where an ffmpeg that
+        disagreed with their placement would refuse the whole command."""
+        source = tmp_path / "live.ts"
+        self._write_segment(source)
+
+        result = subprocess.run(
+            build_live_grab_args("ffmpeg", str(source)), capture_output=True
+        )
+
+        assert result.returncode == 0, result.stderr.decode(errors="replace")
+        assert is_jpeg(result.stdout)
+
+    def test_ffmpeg_accepts_the_warm_command_line(self, tmp_path):
+        source = tmp_path / "live.ts"
+        self._write_segment(source)
+        target = tmp_path / "latest.jpg"
+
+        result = subprocess.run(
+            build_warm_args("ffmpeg", str(source), str(target), 1),
+            capture_output=True,
+        )
+
+        assert result.returncode == 0, result.stderr.decode(errors="replace")
+        assert is_jpeg(target.read_bytes())
 
 
 def test_the_recorder_repairs_timestamps_a_restream_may_not_have():
