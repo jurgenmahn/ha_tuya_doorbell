@@ -63,6 +63,9 @@ CONTINUOUS_MODES: tuple[str, ...] = (MODE_WARM, MODE_BUFFER, MODE_CLIP)
 #: Modes that run the segment ring buffer. "clip" records exactly like
 #: "buffer"; it just produces a video of the whole buffer instead of a still.
 BUFFERED_MODES: tuple[str, ...] = (MODE_BUFFER, MODE_CLIP)
+#: Modes whose grab is a file read, or nothing at all. Caching a camera
+#: thumbnail there would only make it older.
+UNCACHED_FRAME_MODES: tuple[str, ...] = (MODE_OFF, MODE_WARM)
 
 #: A clip is a stream copy of segments that already exist, so it is quick
 #: even for a long buffer; this only guards against a wedged ffmpeg.
@@ -85,6 +88,18 @@ DEFAULT_SEGMENT_SECONDS = 1
 #: Rolling-JPEG rate for warm mode. One frame per second is plenty for a
 #: doorbell and keeps the JPEG encoder off the CPU for the other 24 frames.
 DEFAULT_WARM_FPS = 1
+
+#: Decoder threads for a one-shot grab. Left alone, ffmpeg sizes its decoder,
+#: filter and encoder thread pools by core count, and every thread keeps
+#: full-size frames of its own: a 1296p segment grab peaked at 199 MiB on a
+#: 10-core host, and at 76 MiB pinned. A grab decodes one frame, or at most one
+#: GOP, and nothing waits on it: the event has already fired.
+GRAB_DECODE_THREADS = 1
+
+#: Decoder threads for warm mode, which decodes every frame of the stream for
+#: as long as it runs. One thread is borderline for the 1296p main stream on a
+#: Pi-class CPU; two keep up, at 103 MiB against 363 MiB left to ffmpeg.
+WARM_DECODE_THREADS = 2
 
 #: Rough bitrate assumption for the space check. 2 Mbit/s is ~250 kB/s, so
 #: ~15 MB per minute of buffer.
@@ -124,6 +139,13 @@ WRITE_HEAD_MARGIN = 0.5
 #: A rolling JPEG older than this is not "now" any more. Better to say so than
 #: to hand an automation a picture of an empty porch.
 WARM_MAX_AGE = 30.0
+
+#: How long the camera entity reuses a thumbnail where a grab starts an
+#: ffmpeg. The frontend refreshes a camera card every 10 s, from every open
+#: dashboard, and in on_demand each refresh used to cost ~6 s of an ffmpeg
+#: holding ~100 MiB. 20 s means one grab every two or three refreshes. The
+#: picture of who rang is the doorbell snapshot, and that is never cached.
+CAMERA_FRAME_TTL = 20.0
 
 _JPEG_SOI = b"\xff\xd8"
 _JPEG_EOI = b"\xff\xd9"
@@ -345,9 +367,23 @@ def build_rtsp_url(
 _COMMON_FLAGS = ("-nostdin", "-hide_banner", "-loglevel", "error")
 
 
+#: The JPEG encoder runs at most once a second, so it gets one thread.
+_ENCODER_THREADS = ("-threads", "1")
+
+
 def _input_flags(url: str) -> list[str]:
     # UDP is the RTSP default and drops packets on a busy network; TCP does not.
     return ["-rtsp_transport", "tcp"] if url.startswith("rtsp://") else []
+
+
+def _decode_threads(threads: int) -> list[str]:
+    """Thread options for a command line that decodes; they go before ``-i``.
+
+    The filter graph only converts pixel formats and drops frames, so it gets
+    one thread. Only commands that decode need these: a ``-c copy`` command
+    holds no frames, whatever its thread count.
+    """
+    return ["-filter_threads", "1", "-threads", str(threads)]
 
 
 def build_buffer_args(
@@ -384,11 +420,13 @@ def build_warm_args(
     args = [
         ffmpeg_bin,
         *_COMMON_FLAGS,
+        *_decode_threads(WARM_DECODE_THREADS),
         *_input_flags(source_url),
         "-i", source_url,
         "-an",
         "-vf", f"fps={fps}",
         "-q:v", "2",
+        *_ENCODER_THREADS,
         "-update", "1",
     ]
     if atomic:
@@ -417,10 +455,12 @@ def build_segment_grab_args(ffmpeg_bin: str, path: str, offset: float) -> list[s
     return [
         ffmpeg_bin,
         *_COMMON_FLAGS,
+        *_decode_threads(GRAB_DECODE_THREADS),
         "-i", path,
         "-ss", f"{offset:.3f}",
         "-frames:v", "1",
         "-q:v", "2",
+        *_ENCODER_THREADS,
         "-f", "image2",
         "pipe:1",
     ]
@@ -472,10 +512,12 @@ def build_live_grab_args(ffmpeg_bin: str, source_url: str) -> list[str]:
     return [
         ffmpeg_bin,
         *_COMMON_FLAGS,
+        *_decode_threads(GRAB_DECODE_THREADS),
         *_input_flags(source_url),
         "-i", source_url,
         "-frames:v", "1",
         "-q:v", "2",
+        *_ENCODER_THREADS,
         "-f", "image2",
         "pipe:1",
     ]
@@ -512,6 +554,55 @@ def _read_file(path: str) -> tuple[bytes, float] | None:
     except (FileNotFoundError, OSError):
         return None
     return data, mtime
+
+
+# --- Camera thumbnails -----------------------------------------------------
+
+
+class FrameCache:
+    """Reuse a recent frame, and share one grab between concurrent requests.
+
+    A failure is never kept: a missing picture must not stand in for one. But
+    requests that queued behind a grab take its answer, failed or not, rather
+    than each starting their own -- against an unreachable camera every retry
+    is a full ffmpeg timeout. Only a cancelled grab, which says nothing about
+    the camera, leaves the next request to try for itself.
+    """
+
+    def __init__(self, time_fn: Callable[[], float]) -> None:
+        self._now = time_fn
+        self._lock = asyncio.Lock()
+        self._frame: bytes | None = None
+        self._taken_at = 0.0
+        #: Grabs that ran to completion, failed or not.
+        self._finished = 0
+
+    async def get(
+        self, grab: Callable[[], Awaitable[bytes | None]], ttl: float
+    ) -> bytes | None:
+        """Return a frame at most ``ttl`` seconds old, grabbing one if needed."""
+        if self._is_fresh(ttl):
+            return self._frame
+        seen = self._finished
+        async with self._lock:
+            if self._finished != seen:
+                # A grab finished while this request waited for the lock; its
+                # answer is as current as a new one would be.
+                return self._frame
+            self._frame = await grab()
+            # Counted from arrival: an on-demand grab takes ~6 s, and counting
+            # from its start would expire the frame that much early.
+            self._taken_at = self._now()
+            self._finished += 1
+            return self._frame
+
+    def _is_fresh(self, ttl: float) -> bool:
+        if self._frame is None:
+            return False
+        # A clock stepped backwards makes the age negative; the frame did not
+        # get any younger.
+        age = self._now() - self._taken_at
+        return 0.0 <= age < ttl
 
 
 # --- The provider ----------------------------------------------------------
@@ -562,6 +653,7 @@ class SnapshotProvider:
         # One live grab at a time: a second concurrent RTSP session against this
         # camera measured 15.94 s instead of 5.86 s.
         self._live_lock = asyncio.Lock()
+        self._camera_frames = FrameCache(self._now)
 
     # --- Public interface ---
 
@@ -705,6 +797,16 @@ class SnapshotProvider:
             return await self._fallback_grab("rolling JPEG was missing or stale")
 
         return await self._grab_on_demand()
+
+    async def async_camera_frame(self) -> bytes | None:
+        """The newest frame for the camera entity's thumbnail.
+
+        Unlike ``async_grab``, which serves the doorbell snapshot and must be
+        current, this may return a frame up to ``CAMERA_FRAME_TTL`` old where
+        a fresh one would cost an ffmpeg.
+        """
+        ttl = 0.0 if self._active_mode in UNCACHED_FRAME_MODES else CAMERA_FRAME_TTL
+        return await self._camera_frames.get(self.async_grab, ttl)
 
     # --- Storage ---
 
